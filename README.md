@@ -1,0 +1,4 @@
+tidbits
+=======
+
+Small code tidbits 
