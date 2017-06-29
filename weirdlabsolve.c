@@ -16,7 +16,7 @@
  */
 
 #ifndef lint
-static char *RCSid = "$Header: /home/huntert/proj/tidbits/RCS/weirdsolve.c,v 1.2 2017/06/29 15:05:25 huntert Exp $";
+static char *RCSid = "$Header: /home/huntert/proj/tidbits/RCS/weirdsolve.c,v 1.3 2017/06/29 17:15:08 huntert Exp $";
 #endif
 
 #include <unistd.h>
@@ -34,20 +34,31 @@ static char *RCSid = "$Header: /home/huntert/proj/tidbits/RCS/weirdsolve.c,v 1.2
 #define HEIGHT	4	/* height of puzzle space */
 #define SIZE	20	/* elements in puzzle space */
 
+#define WIDTHLESS1 (WIDTH-1)	/* used by flip() */
+#define HEIGHTLESS1 (HEIGHT-1)
+
 /*
  * globals
  */
 
-int debug = 1;
-int puzzle[WIDTH][HEIGHT];				/* puzzle space */
-int sequence[SIZE] = { 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,	/*seq of moves*/
-		      10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
+int debug = 0;
 
-int successlength = 99;		/* once we've found a successful sequence,
-				   keep going and print again if we find a
-				   shorter one. */
+/* possible moves */
+static int moves[SIZE] = { 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,
+			  10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
+
+/* moves mapped to bit placements */
+static long pos2bit[SIZE] =	{0x0001, 0x0002, 0x0004, 0x0008, 0x0010,
+				 0x0020, 0x0040, 0x0080, 0x0100, 0x0200,
+				 0x0400, 0x0800, 0x1000, 0x2000, 0x4000,
+				 0x8000, 0x10000, 0x20000, 0x40000, 0x80000};
+
+/* a successfully solved puzzle */
+#define PUZZLECOMPLETE 0x000FFFFF
+
 long outputcalls = 0;		/* how many sequences have we processed? */
 #define OUTPUTCHECK 10000000	/* how often to do a speed check */
+long StopAfter = 0;		/* if non-zero, stop after this many seqs */
 
 /* only needed when we run testing */
 int testseq[5][20] = {
@@ -62,12 +73,13 @@ time_t start;			/* for examining how long things take */
 time_t lasttime;		/* for examining how long things take */
 
 /* predeclare functions */
-void resetpuzzle(int puzzle[HEIGHT][WIDTH]);
-void printpuzzle(int puzzle[HEIGHT][WIDTH]);
-void generate(int n, int *sequence, int puzzle[HEIGHT][WIDTH]);
-void flip(int puzzle[HEIGHT][WIDTH], int position);
-void testmode(int puzzle[HEIGHT][WIDTH]);
-void output(int *sequence, int puzzle[HEIGHT][WIDTH]);
+/* void resetpuzzle(long *puzzle); */
+#define resetpuzzle(puzzle) *puzzle=0x2940
+void printpuzzle(long *puzzle);
+void generate(int n, int *sequence, long *puzzle);
+void flip(long *puzzle, int position);
+void testmode(long *puzzle);
+void output(int *sequence, long *puzzle);
 
 /* int sys_nerr; */
 /* char *sys_errlist[]; */
@@ -75,52 +87,65 @@ int errno;
 
 int main(int argc, char *argv[])
 {
-
 	time_t t;
-	int puzzle[HEIGHT][WIDTH];
+	long puzzle;	/* puzzle space,
+			   positions represented by individual bits
+			    0  1  2  3  4 == 0x0001 0x0002 0x0004 0x0008 0x0010
+			    5  6  7  8  9    0x0020 0x0040 0x0080 0x0100 0x0200
+			   10 11 12 13 14    0x0400 0x0800 0x1000 0x2000 0x4000
+			   15 16 17 18 19    0x8000 0x10000 0x20000 0x40000 ...
+			*/
 	int steps = SIZE;
 
 	/* initialize puzzle and timers */
-	resetpuzzle(puzzle);
+	resetpuzzle(&puzzle);
 	start=lasttime=time(NULL);
 
 	/* process options */
 	int flags, opt;
-	while ((opt = getopt(argc, argv, "dtn:")) != -1) {
+	while ((opt = getopt(argc, argv, "dtn:S:")) != -1) {
 	    switch(opt) {
 	    case 'd':
 		debug++;
 		break;
 	    case 't':
-		testmode(puzzle);
+		testmode(&puzzle);
 		exit(0);
 	    case 'n':
 		steps = atoi(optarg);
 		break;
+	    case 'S':
+		StopAfter = atoi(optarg);
+		break;
 	    default: /* '?' */
-		fprintf(stderr, "Usage: %s [-d] [-t] [-n steps\n"
+		fprintf(stderr, "Usage: %s [-d] [-t] [-n steps]\n"
 				"\t-d	: increase debug value\n"
 				"\t-t	: test mode -- just show details of "
 					 "processing 5 sequences of 20\n"
-				"\t-n N	: examine all solutions with N steps\n",
+				"\t-n N	: examine all solutions with N steps\n"
+				"\t-S M	: stop after M iterations\n",
 				argv[0]);
 		exit(EXIT_FAILURE);
 	    }
 	}
 			
-	/* run heaps algorithm, which calls output() to evaluate each
-	 * individual sequence combination over puzzle to see if it works
+	/*
+	 * generate() uses heaps algorithm, which calls output() to evaluate
+	 * each individual sequence combination over puzzle to see if it works
+	 * ...and between those two it's going to take 25 trillion years to
+	 * run
+	 * generate(SIZE, moves, &puzzle);
 	 */
-	/* generate(SIZE, sequence, puzzle); */
-	/* 20! iterations... let's try some smaller numbers */
+	generate(SIZE, moves, &puzzle);
+
 	int sizes, startsize;
 	startsize=time(NULL);
 	for (sizes = 1; sizes < 6; sizes++) {
-	    generate(sizes, sequence, puzzle);
+	    generate(sizes, moves, &puzzle);
 	    /* reset sequence */
 	    int temp;
 	    for (temp = 0; temp < SIZE; temp++) {
-		sequence[temp] = temp;
+		moves[temp] = temp;
 	    }
 	    temp=time(NULL);
 	    printf("Total time for sequence of length %d: %d sec\n",
@@ -128,24 +153,10 @@ int main(int argc, char *argv[])
 	    startsize = temp;
 	}
 
-	fprintf(stderr, "hello, world!\n");
-
-	printpuzzle(puzzle);
-
-	/* testing...
-	printf("Flip position 0\n");
-	flip(puzzle, 0);
-	printpuzzle(puzzle);
-
-	printf("Flip position 6\n");
-	flip(puzzle, 6);
-	printpuzzle(puzzle);
-	*/
-
 	printf("Elapsed %ld seconds\n",time(NULL)-lasttime);
 }
 
-void testmode(int puzzle[HEIGHT][WIDTH])
+void testmode(long *puzzle)
 {
     /* explicitly process each of the seqences in @testseq */
     debug=2;
@@ -161,7 +172,10 @@ void testmode(int puzzle[HEIGHT][WIDTH])
     return;
 }
 
-void resetpuzzle(int puzzle[HEIGHT][WIDTH])
+
+/* now we can just make this a macro! */
+
+void resetpuzzle_unused(long *puzzle)
 {
     /*
     puzzle = {
@@ -170,23 +184,18 @@ void resetpuzzle(int puzzle[HEIGHT][WIDTH])
 	{0, 1, 0, 1, 0},
 	{0, 0, 0, 0, 0}
     };
+    ...in the old way
     */
 
-    int x, y;
-    for(y = 0; y < HEIGHT; y++) {
-	for(x = 0; x < WIDTH; x++) {
-	    puzzle[y][x] = 0;
-	}
-    }
-    puzzle[1][1]=1;
-    puzzle[1][3]=1;
-    puzzle[2][1]=1;
-    puzzle[2][3]=1;
+    *puzzle=0;	/* clear the puzzle space */
+
+    /* set positions 6, 8, 11, and 13 */
+    *puzzle = *puzzle | pos2bit[6] | pos2bit[8] | pos2bit[11] | pos2bit[13];
 
     return;
 }
 
-void output(int *sequence, int puzzle[HEIGHT][WIDTH])
+void output(int *sequence, long *puzzle)
 {
     int i, s, x, y;
     outputcalls++;
@@ -196,6 +205,10 @@ void output(int *sequence, int puzzle[HEIGHT][WIDTH])
 	printf("%d iterations in %ld sec [%ld total, %.2f mil checks/sec]\n",
 	    OUTPUTCHECK, (t-lasttime), outputcalls, rate);
 	lasttime=t;
+	if ((StopAfter) && (outputcalls >= StopAfter)) {
+	    printf("Stopping after %d iterations\n", outputcalls);
+	    exit(0);
+	}
     }
 
     if (debug > 0) {
@@ -214,23 +227,13 @@ void output(int *sequence, int puzzle[HEIGHT][WIDTH])
 	    printf("flip %d:\n", sequence[s]);
 	    printpuzzle(puzzle);
 	}
-	/* test for completion */
-	int success=1;
-	for(y = 0; y < HEIGHT; y++) {
-	    for(x = 0; x < WIDTH; x++) {
-		if (puzzle[y][x] == 0) { success=0; break; }
+	/* test for completion -- pretty easy now! */
+	if (*puzzle == PUZZLECOMPLETE) {
+	    printf("\nsuccess in %d with seq: ",(s+1));
+	    for(i = 0; i < s+1; i++) {
+		printf("%d ", sequence[i]);
 	    }
-	    if (success == 0) { break; }
-	}
-	if (success == 1) {
-	    if ((s+1) < successlength) {
-		successlength=s+1;
-		printf("\nsuccess in %d with seq: ",successlength);
-		for(i = 0; i < s+1; i++) {
-		    printf("%d ", sequence[i]);
-		}
-		printf("\n");
-	    }
+	    printf("\n");
 	    break;
 	}
     }
@@ -239,7 +242,7 @@ void output(int *sequence, int puzzle[HEIGHT][WIDTH])
     resetpuzzle(puzzle);
 }
 
-void generate(int n, int *sequence, int puzzle[HEIGHT][WIDTH])
+void generate(int n, int *sequence, long *puzzle)
 {
     int i;
 
@@ -266,7 +269,7 @@ void generate(int n, int *sequence, int puzzle[HEIGHT][WIDTH])
     generate(n-1, sequence, puzzle);
 }
 
-void flip(int puzzle[HEIGHT][WIDTH], int position)
+void flip(long *puzzle, int position)
 {
     /*
     # flip monster in position $x, which also flips those in all adjacent
@@ -276,136 +279,68 @@ void flip(int puzzle[HEIGHT][WIDTH], int position)
     # 4 5 6 7
     # 8 9 A B
     # C D E F
-    # then
+    # ...but now
     # 0 1 2 3 4
     # 5 6 7 8 9
     # A B C D E
     # F G H I J
     */
-    int x = position % WIDTH;
-    int y = position / WIDTH;
+    /*
+    puzzle[HEIGHT*WIDTH]
+    x+1, P+1 -- no for 4,9,14,19 P%WIDTH=WIDTH-1
+    x-1, P-1 -- no for 0,5,10,15 P%WIDTH=0
+    y+1, P+5 -- no for 15-19 P/WIDTH=HEIGHT-1
+    y-1, P-5 -- no for 0-4 P/WIDTH=0
 
+    a flip is an XOR -- ^ in C parlance
+    */
+
+/* #define EXTRADEBUG */
     /* flip position itself */
-    puzzle[y][x] = 0 + !(puzzle[y][x]);
-    
-    /* and all adjacent */
-    if (y > 0) {
-	puzzle[y-1][x] = 0 + !(puzzle[y-1][x]);
+    *puzzle = *puzzle ^ pos2bit[position];
+    #ifdef EXTRADEBUG
+    printf("flip origin %d ",position);
+    #endif
+
+    if ((position % WIDTH) < WIDTHLESS1) {
+	*puzzle = *puzzle ^ pos2bit[position+1];
+	#ifdef EXTRADEBUG
+	printf("flip x+1 %d 0x%x ",position+1,pos2bit[position+1]);
+	#endif
     }
-    if (x > 0) {
-	puzzle[y][x-1] = 0 + !(puzzle[y][x-1]);
+    if ((position % WIDTH) > 0) {
+	*puzzle = *puzzle ^ pos2bit[position-1];
+	#ifdef EXTRADEBUG
+	printf("flip x-1 %d 0x%x ",position-1,pos2bit[position-1]);
+	#endif
     }
-    if (y < (HEIGHT-1)) {
-	puzzle[y+1][x] = 0 + !(puzzle[y+1][x]);
+    if ((position / WIDTH) < HEIGHTLESS1) {
+	*puzzle = *puzzle ^ pos2bit[position+WIDTH];
+	#ifdef EXTRADEBUG
+	printf("flip y+1 %d 0x%x ",position+WIDTH,pos2bit[position+WIDTH]);
+	#endif
     }
-    if (x < (WIDTH-1)) {
-	puzzle[y][x+1] = 0 + !(puzzle[y][x+1]);
+    if ((position / WIDTH) > 0) {
+	*puzzle = *puzzle ^ pos2bit[position-WIDTH];
+	#ifdef EXTRADEBUG
+	printf("flip y-1 %d 0x%x ",position-WIDTH,pos2bit[position-WIDTH]);
+	#endif
     }
+    #ifdef EXTRADEBUG
+    printf("\n");
+    #endif
+
+    return;
 }
 /* print out the puzzle matrix */
-void printpuzzle(int puzzle[HEIGHT][WIDTH])
+void printpuzzle(long *puzzle)
 {
-    int x, y;
+    int x, y, i;
 
     for(y = 0; y < HEIGHT; y++) {
 	for(x = 0; x < WIDTH; x++) {
-	    printf("%d ", puzzle[y][x]);
+	    printf("%d ", (*puzzle & pos2bit[x + WIDTH*y] ? 1 : 0));
 	}
 	printf("\n");
     } 
 }
-
-/*
-
-#!/usr/bin/perl -w
-
-use strict;
-$|++;
-
-# solve the weird lab 3rd floor
-
-my @third = ();
-sub reset {
-#   @third = ([0, 1, 1, 0],
-#	     [1, 0, 0, 1],
-#	     [1, 0, 0, 1],
-#	     [0, 1, 1, 0]);
-#   @third = ([0, 0, 0, 0],
-#	     [0, 0, 0, 0],
-#	     [0, 0, 0, 0],
-#	     [0, 0, 0, 0]);
-# fourth really
-   @third = ([0, 0, 0, 0, 0],
-	     [0, 1, 0, 1, 0],
-	     [0, 1, 0, 1, 0],
-	     [0, 0, 0, 0, 0]);
-}
-&reset;
-# ok third success is all ones
-
-# find sequence of flips to make all positions the same color (or dark?)
-my $movelimit = 20;
-
-# reckon we don't need to move any position more than once
-# and that thus we only need at most 16 moves
-#my @seq = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-my @seq = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
-	   19, 20);
-my ($width, $height, $size) = (5, 4, 20);
-my %seenseq = ();
-$seenseq{join(" ",@seq)}++;
-
-&printthird;
-my $successlength = 99;
-my $outputcalls = 0;
-my $ltime = time();
-
-if ($ARGV[0] =~ /^-i/i) {
-    &map;
-    my $moves = 0;
-    my @s = ();
-    while (<STDIN>) {
-	chomp;
-	if ($_ eq "r") {
-	    &reset; $moves=0; &printthird(" reset"); @s=();
-	    next;
-	}
-	if ($_ eq "m") { &map; next; }
-	next unless (($_ > -1) && ($_ < $size));
-	push @s, $_;
-	$moves++;
-	&flip($_);
-	&printthird(" moves: ".$moves);
-	print "seq: ".join(", ",@s)."\n";
-    }
-    sub map {
-    print
-"Interactive Mode -- map:   0  1  2  3  4
-			   5  6  7  8  9
-			  10 11 12 13 14
-			  15 16 17 18 19\n";
-    }
-}
-## heap's algorithm will re-arrange @seq in each possible combination, calling
-## &output on each one.
-sub output {
-}
-
-## heap's algorithm to find all the permutations of 16 numbers...
-# 
-# procedure generate(n : integer, A : array of any):
-#     if n = 1 then
-#           output(A)
-#     else
-#         for i := 0; i < n - 1; i += 1 do
-#             generate(n - 1, A)
-#             if n is even then
-#                 swap(A[i], A[n-1])
-#             else
-#                 swap(A[0], A[n-1])
-#             end if
-#         end for
-#         generate(n - 1, A)
-#     end if
-# 
-*/
