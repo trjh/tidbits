@@ -16,9 +16,11 @@
  */
 
 #ifndef lint
-static char *RCSid = "$Header: /home/huntert/proj/tidbits/RCS/weirdsolve.c,v 1.1 2017/06/26 23:29:23 tim Exp $";
+static char *RCSid = "$Header: /home/huntert/proj/tidbits/RCS/weirdsolve.c,v 1.2 2017/06/29 15:05:25 huntert Exp $";
 #endif
 
+#include <unistd.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
 #include <time.h>
@@ -36,7 +38,7 @@ static char *RCSid = "$Header: /home/huntert/proj/tidbits/RCS/weirdsolve.c,v 1.1
  * globals
  */
 
-int debug = 0;
+int debug = 1;
 int puzzle[WIDTH][HEIGHT];				/* puzzle space */
 int sequence[SIZE] = { 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,	/*seq of moves*/
 		      10, 11, 12, 13, 14, 15, 16, 17, 18, 19};
@@ -47,6 +49,15 @@ int successlength = 99;		/* once we've found a successful sequence,
 long outputcalls = 0;		/* how many sequences have we processed? */
 #define OUTPUTCHECK 10000000	/* how often to do a speed check */
 
+/* only needed when we run testing */
+int testseq[5][20] = {
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19},
+    {2, 16, 15, 5, 0, 9, 18, 12, 4, 19, 11, 2, 3, 7, 10, 8, 13, 6, 17, 14},
+    {17, 4, 5, 3, 16, 14, 18, 19, 1, 7, 9, 13, 12, 6, 0, 11, 10, 15, 2, 8},
+    {14, 19, 11, 18, 1, 5, 8, 15, 13, 3, 10, 4, 12, 17, 6, 7, 0, 16, 2, 9},
+    {11, 13, 15, 2, 5, 16, 1, 12, 7, 3, 18, 14, 8, 9, 19, 0, 17, 4, 10, 6},
+};
+
 time_t start;			/* for examining how long things take */
 time_t lasttime;		/* for examining how long things take */
 
@@ -55,26 +66,67 @@ void resetpuzzle(int puzzle[HEIGHT][WIDTH]);
 void printpuzzle(int puzzle[HEIGHT][WIDTH]);
 void generate(int n, int *sequence, int puzzle[HEIGHT][WIDTH]);
 void flip(int puzzle[HEIGHT][WIDTH], int position);
+void testmode(int puzzle[HEIGHT][WIDTH]);
+void output(int *sequence, int puzzle[HEIGHT][WIDTH]);
 
 /* int sys_nerr; */
 /* char *sys_errlist[]; */
 int errno;
 
-int main()
+int main(int argc, char *argv[])
 {
 
 	time_t t;
 	int puzzle[HEIGHT][WIDTH];
+	int steps = SIZE;
 
-	/* initialize puzzle */
+	/* initialize puzzle and timers */
 	resetpuzzle(puzzle);
-
 	start=lasttime=time(NULL);
-	
+
+	/* process options */
+	int flags, opt;
+	while ((opt = getopt(argc, argv, "dtn:")) != -1) {
+	    switch(opt) {
+	    case 'd':
+		debug++;
+		break;
+	    case 't':
+		testmode(puzzle);
+		exit(0);
+	    case 'n':
+		steps = atoi(optarg);
+		break;
+	    default: /* '?' */
+		fprintf(stderr, "Usage: %s [-d] [-t] [-n steps\n"
+				"\t-d	: increase debug value\n"
+				"\t-t	: test mode -- just show details of "
+					 "processing 5 sequences of 20\n"
+				"\t-n N	: examine all solutions with N steps\n",
+				argv[0]);
+		exit(EXIT_FAILURE);
+	    }
+	}
+			
 	/* run heaps algorithm, which calls output() to evaluate each
 	 * individual sequence combination over puzzle to see if it works
 	 */
-	generate(SIZE, sequence, puzzle);
+	/* generate(SIZE, sequence, puzzle); */
+	/* 20! iterations... let's try some smaller numbers */
+	int sizes, startsize;
+	startsize=time(NULL);
+	for (sizes = 1; sizes < 6; sizes++) {
+	    generate(sizes, sequence, puzzle);
+	    /* reset sequence */
+	    int temp;
+	    for (temp = 0; temp < SIZE; temp++) {
+		sequence[temp] = temp;
+	    }
+	    temp=time(NULL);
+	    printf("Total time for sequence of length %d: %d sec\n",
+		sizes, (temp-startsize));
+	    startsize = temp;
+	}
 
 	fprintf(stderr, "hello, world!\n");
 
@@ -91,6 +143,22 @@ int main()
 	*/
 
 	printf("Elapsed %ld seconds\n",time(NULL)-lasttime);
+}
+
+void testmode(int puzzle[HEIGHT][WIDTH])
+{
+    /* explicitly process each of the seqences in @testseq */
+    debug=2;
+    int i;
+
+    for (i=0; i<5; i++) {
+	printf("---restart---\n");
+	resetpuzzle(puzzle);
+	printpuzzle(puzzle);
+	output(testseq[i], puzzle);
+    }
+
+    return;
 }
 
 void resetpuzzle(int puzzle[HEIGHT][WIDTH])
@@ -131,11 +199,13 @@ void output(int *sequence, int puzzle[HEIGHT][WIDTH])
     }
 
     if (debug > 0) {
-	printf("sequence: ");
-	for(i = 0; i < SIZE; i++) {
-	    printf("%d ", sequence[i]);
+	/* printf("sequence: "); */
+	printf("trying ");
+	for(i = 0; i < SIZE-1; i++) {
+	    printf("%d,", sequence[i]);
 	}
-	printf("\n");
+	/* don't print a trailing comma at the end */
+	printf("%d\n", sequence[SIZE-1]);
     }
 
     for (s = 0; s < SIZE; s++) {
