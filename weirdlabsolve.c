@@ -16,7 +16,7 @@
  */
 
 #ifndef lint
-static char *RCSid = "$Header: /home/huntert/proj/tidbits/RCS/weirdsolve.c,v 1.3 2017/06/29 17:15:08 huntert Exp $";
+static char *RCSid = "$Header: /home/huntert/proj/tidbits/RCS/weirdsolve.c,v 1.4 2017/06/30 17:04:38 huntert Exp $";
 #endif
 
 #include <unistd.h>
@@ -57,7 +57,7 @@ static long pos2bit[SIZE] =	{0x0001, 0x0002, 0x0004, 0x0008, 0x0010,
 #define PUZZLECOMPLETE 0x000FFFFF
 
 long outputcalls = 0;		/* how many sequences have we processed? */
-#define OUTPUTCHECK 10000000	/* how often to do a speed check */
+#define OUTPUTCHECK 1000000000	/* how often to do a speed check */
 long StopAfter = 0;		/* if non-zero, stop after this many seqs */
 
 /* only needed when we run testing */
@@ -74,12 +74,13 @@ time_t lasttime;		/* for examining how long things take */
 
 /* predeclare functions */
 /* void resetpuzzle(long *puzzle); */
-#define resetpuzzle(puzzle) *puzzle=0x2940
+#define resetpuzzle(puzzle) *puzzle=0x00002940
 void printpuzzle(long *puzzle);
 void generate(int n, int *sequence, long *puzzle);
 void flip(long *puzzle, int position);
 void testmode(long *puzzle);
 void output(int *sequence, long *puzzle);
+int  lexpermute(int *SET,int setsize,long *puzzle,int* solutionpath,int STEPS);
 
 /* int sys_nerr; */
 /* char *sys_errlist[]; */
@@ -103,6 +104,7 @@ int main(int argc, char *argv[])
 
 	/* process options */
 	int flags, opt;
+	extern char *optarg;
 	while ((opt = getopt(argc, argv, "dtn:S:")) != -1) {
 	    switch(opt) {
 	    case 'd':
@@ -136,24 +138,188 @@ int main(int argc, char *argv[])
 	 * run
 	 * generate(SIZE, moves, &puzzle);
 	 */
-	generate(SIZE, moves, &puzzle);
 
-	int sizes, startsize;
+	/*
+	 * now use lexpermute(), which iterates lexically, and is more
+	 * efficient with its calls to flip().
+	 */
+	int startsize;
+	int solutionpath[SIZE];
+	solutionpath[0] = -1;
+	long guessrate = 80060000;	/* last # iterations/sec */
+
 	startsize=time(NULL);
-	for (sizes = 1; sizes < 6; sizes++) {
-	    generate(sizes, moves, &puzzle);
-	    /* reset sequence */
-	    int temp;
-	    for (temp = 0; temp < SIZE; temp++) {
-		moves[temp] = temp;
+
+	long solspace = 1;
+	int j;
+	long iterations;
+
+	if (steps != SIZE) {
+	    for (j=0; j<steps; j++) {
+		solspace = solspace * (SIZE-j);
 	    }
-	    temp=time(NULL);
-	    printf("Total time for sequence of length %d: %d sec\n",
-		sizes, (temp-startsize));
+	    printf("steps: %d, solution space: %.2f [%ld] mil, "
+		   "estimate in hours: %ld\n", steps, (double) solspace/1000000,
+		   solspace,
+		   solspace / (guessrate*3600));
+	    iterations = lexpermute(moves, SIZE, &puzzle, solutionpath, steps);
+	    int temp=time(NULL);
+	    double rate = (double) iterations /
+			  (double) ((temp-startsize) * 1000000);
+	    printf("Total time for sequence of length %d: "
+		  "%d sec, rate %f million/sec\n",
+		steps, (temp-startsize), rate);
+	    printf("iterations %ld vs. solspace %ld\n",iterations,solspace);
+	    exit(0);
+	}
+
+	for (steps = 1; steps < 10; steps++) {
+	    for (j=0; j<steps; j++) {
+		solspace = solspace * (SIZE-j);
+	    }
+	    printf("steps: %d, solution space: %.2f [%ld] mil, "
+		   "estimate in hours: %ld\n", steps, (double) solspace/1000000,
+		   solspace,
+		   solspace / (guessrate*3600));
+	    printf("---restart---\n");
+	    resetpuzzle(&puzzle);
+	    iterations = lexpermute(moves, SIZE, &puzzle, solutionpath, steps);
+	    int temp=time(NULL);
+	    double rate = (double) iterations /
+			  (double) ((temp-startsize) * 1000000);
+	    printf("Total time for sequence of length %d: "
+		  "%d sec, rate %f million/sec\n",
+		steps, (temp-startsize), rate);
+	    printf("iterations %ld vs. solspace %ld\n",iterations,solspace);
 	    startsize = temp;
 	}
 
 	printf("Elapsed %ld seconds\n",time(NULL)-lasttime);
+}
+
+int lexpermute(int *SET,int setsize,long *puzzle,int* solutionpath,int STEPS)
+{
+    /*
+    inputs:
+	int SET[] -- set of possible values
+	int setsize -- number of elements in SET
+	int *puzzle -- link to puzzle space in state we process on
+	int *SOLUTIONPATH -- ordered set of values already applied to puzzle
+	int STEPS -- number of steps of solution left to try
+    */
+    long iterations=0;	/* count the number we process internally */
+    long mypuzzle;
+/* #define EXTRADEBUG1 */
+
+    if (STEPS == 1) {
+	/* we have reached the end, check the result(s) & return */
+	int i;
+	for (i=0; i<setsize; i++) {
+	    #ifdef EXTRADEBUG1
+	    printf("final step, testing flip of pos %d\n", SET[i]);
+	    #endif
+	    
+	    iterations++;
+	    mypuzzle = *puzzle;
+	    flip(&mypuzzle, SET[i]);
+	    if (mypuzzle == PUZZLECOMPLETE) {
+		printf("\nsuccess with seq: ");
+		int j=0;
+		while(1) {
+		    if (solutionpath[j] == -1) {
+			break;
+		    }
+		    printf("%d ", solutionpath[j]);
+		}
+		printf("%d\n", SET[i]);
+		printpuzzle(&mypuzzle);
+	    }
+
+	    /* spot checks of timing and results */
+	    outputcalls++;
+	    if ((outputcalls % OUTPUTCHECK) == 0) {
+		time_t t = time(NULL);
+		double rate = ((double) outputcalls /
+			       (double) (1000000 * (t-start)));
+		printf("%d iterations in %ld sec "
+		       "[%ld total, %.2f mil checks/sec]\n",
+		    OUTPUTCHECK, (t-lasttime), outputcalls, rate);
+		lasttime=t;
+		if ((StopAfter) && (outputcalls >= StopAfter)) {
+		    printf("Stopping after %ld iterations\n", outputcalls);
+		    exit(0);
+		}
+		int tempseq[SIZE];
+		for (int j=0; ;j++) {
+		    if (solutionpath[j] == -1) {
+			tempseq[j] = SET[i];
+			tempseq[j+1] = -1;
+			break;
+		    }
+		    tempseq[j] = solutionpath[j];
+		}
+
+		long testpuzzle;
+		resetpuzzle(&testpuzzle);
+		output(&tempseq, &testpuzzle);
+
+		if (debug > 0) {
+		    printf (".lexpermute result: \n"); printpuzzle(&mypuzzle);
+		    printf (".....output result: \n"); printpuzzle(&testpuzzle);
+		}
+		if (mypuzzle != testpuzzle) {
+		    printf ("RESULT MISMATCH! exit\n");
+		    exit(-1);
+		}
+	    }
+
+	}
+	return iterations;
+    }
+
+    /* if we're here, we have more than one step left to process */
+    int i;
+    for (i=0; i<setsize; i++) {
+	mypuzzle = *puzzle;
+	flip(&mypuzzle, SET[i]);
+
+	int myset[setsize-1];
+	int j = 0;
+	int mysetpos = 0;
+	for (j=0; j<setsize; j++) {
+	    if (!(i == j)) {
+		myset[mysetpos] = SET[j];
+		mysetpos++;
+	    }
+	}
+
+	#ifdef EXTRADEBUG1
+	printf("working element %d, set to pass down: ", SET[i]);
+	for (j=0; j<(setsize-1); j++) { printf("%d, ",myset[j]); }
+	printf("\n");
+	#endif
+
+	int mysolutionpath[SIZE];
+	/* copy solutionpath and this element into mysolutionpath */
+	for (j = 0; ; j++) {
+	    if (solutionpath[j] == -1) {
+		mysolutionpath[j] = SET[i];
+		mysolutionpath[j+1] = -1;
+		break;
+	    }
+	    /* else */
+	    mysolutionpath[j] = solutionpath[j];
+	}
+	iterations = iterations +
+	    lexpermute(myset, setsize-1, &mypuzzle, mysolutionpath, STEPS-1);
+    }
+
+    return iterations;
+
+    /*
+    ...and now startpoint can be any array, just process the steps in
+    startpoint and call &lexpermute with that many fewer steps
+    */
 }
 
 void testmode(long *puzzle)
@@ -172,29 +338,6 @@ void testmode(long *puzzle)
     return;
 }
 
-
-/* now we can just make this a macro! */
-
-void resetpuzzle_unused(long *puzzle)
-{
-    /*
-    puzzle = {
-	{0, 0, 0, 0, 0},
-	{0, 1, 0, 1, 0},
-	{0, 1, 0, 1, 0},
-	{0, 0, 0, 0, 0}
-    };
-    ...in the old way
-    */
-
-    *puzzle=0;	/* clear the puzzle space */
-
-    /* set positions 6, 8, 11, and 13 */
-    *puzzle = *puzzle | pos2bit[6] | pos2bit[8] | pos2bit[11] | pos2bit[13];
-
-    return;
-}
-
 void output(int *sequence, long *puzzle)
 {
     int i, s, x, y;
@@ -206,7 +349,7 @@ void output(int *sequence, long *puzzle)
 	    OUTPUTCHECK, (t-lasttime), outputcalls, rate);
 	lasttime=t;
 	if ((StopAfter) && (outputcalls >= StopAfter)) {
-	    printf("Stopping after %d iterations\n", outputcalls);
+	    printf("Stopping after %ld iterations\n", outputcalls);
 	    exit(0);
 	}
     }
@@ -214,14 +357,18 @@ void output(int *sequence, long *puzzle)
     if (debug > 0) {
 	/* printf("sequence: "); */
 	printf("trying ");
-	for(i = 0; i < SIZE-1; i++) {
-	    printf("%d,", sequence[i]);
-	}
 	/* don't print a trailing comma at the end */
-	printf("%d\n", sequence[SIZE-1]);
+	printf("%d", sequence[0]);
+	for(i = 1; i < SIZE-1; i++) {
+	    if (sequence[s] == -1) { break; }
+	    printf(",%d", sequence[i]);
+	}
+	printf("\n");
     }
 
     for (s = 0; s < SIZE; s++) {
+	if (sequence[s] == -1) { break; }
+
 	flip(puzzle, sequence[s]);
 	if (debug > 1) {
 	    printf("flip %d:\n", sequence[s]);
@@ -237,9 +384,6 @@ void output(int *sequence, long *puzzle)
 	    break;
 	}
     }
-
-    /* reset the puzzle space */
-    resetpuzzle(puzzle);
 }
 
 void generate(int n, int *sequence, long *puzzle)
@@ -247,6 +391,8 @@ void generate(int n, int *sequence, long *puzzle)
     int i;
 
     if (n == 1) {
+	/* reset the puzzle space */
+	resetpuzzle(puzzle);
 	output(sequence, puzzle);
 	return;
     }
@@ -295,38 +441,38 @@ void flip(long *puzzle, int position)
     a flip is an XOR -- ^ in C parlance
     */
 
-/* #define EXTRADEBUG */
+/* #define EXTRADEBUG2 */
     /* flip position itself */
     *puzzle = *puzzle ^ pos2bit[position];
-    #ifdef EXTRADEBUG
+    #ifdef EXTRADEBUG2
     printf("flip origin %d ",position);
     #endif
 
     if ((position % WIDTH) < WIDTHLESS1) {
 	*puzzle = *puzzle ^ pos2bit[position+1];
-	#ifdef EXTRADEBUG
+	#ifdef EXTRADEBUG2
 	printf("flip x+1 %d 0x%x ",position+1,pos2bit[position+1]);
 	#endif
     }
     if ((position % WIDTH) > 0) {
 	*puzzle = *puzzle ^ pos2bit[position-1];
-	#ifdef EXTRADEBUG
+	#ifdef EXTRADEBUG2
 	printf("flip x-1 %d 0x%x ",position-1,pos2bit[position-1]);
 	#endif
     }
     if ((position / WIDTH) < HEIGHTLESS1) {
 	*puzzle = *puzzle ^ pos2bit[position+WIDTH];
-	#ifdef EXTRADEBUG
+	#ifdef EXTRADEBUG2
 	printf("flip y+1 %d 0x%x ",position+WIDTH,pos2bit[position+WIDTH]);
 	#endif
     }
     if ((position / WIDTH) > 0) {
 	*puzzle = *puzzle ^ pos2bit[position-WIDTH];
-	#ifdef EXTRADEBUG
+	#ifdef EXTRADEBUG2
 	printf("flip y-1 %d 0x%x ",position-WIDTH,pos2bit[position-WIDTH]);
 	#endif
     }
-    #ifdef EXTRADEBUG
+    #ifdef EXTRADEBUG2
     printf("\n");
     #endif
 
