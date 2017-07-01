@@ -662,7 +662,7 @@ parallelization?!
 
 Looks like I should just be using fork.
 
-Version 1.9.1
+Version 1.9
 
 - make flipout into a macro that uses a static mapping table pos2flip, which
   is initialized with init_pos2flip().  improves speed about 40%
