@@ -285,6 +285,9 @@ sub generate {
 # 3.02 mil checks/sec
 
 =cut
+#
+# START: Version 1.2
+#
 further steps:
 . Update existing perl code to take a -test flag, print explicit steps and
   results for five test sequences
@@ -297,8 +300,11 @@ further steps:
 . Update existing C code to take a -test flag, as for perl. Compare results
 . Save existing C code aside
 
-# revision 1.2
 # checkpoint on timvm: 4.26 mil checks/sec
+#
+#   END: Version 1.2
+# START: Version 1.3
+#
 
 . New puzzle representation using single-dimensional array: 
     void resetpuzzle(int puzzle[HEIGHT][WIDTH]);
@@ -316,8 +322,12 @@ further steps:
 
 . Test the above
 
-# revision 1.3
+#
 # checkpoint on timvm: 6.06 mil checks/sec [42% improvement over 4.26mil]
+#
+#   END: Version 1.3
+# START: Version 1.4
+#
 
 - New code takes mandatory arguments:
     -n[umsteps] N	:: examine all possible combinations with N steps
@@ -365,8 +375,10 @@ further steps:
     startpoint and call &lexpermute with that many fewer steps
 
 #
-# revision 1.4
 # checkpoint on timvm: 92 mil checks/sec [15x improvement over 6.06mil]
+#
+#   END: Version 1.4
+# START: Version 1.5
 #
 
     - use clock() for more precise timings, clean up timing a bit
@@ -374,7 +386,8 @@ further steps:
     - add more debug code
 
 #
-# revision 1.5
+#   END: Version 1.5
+# START: Version 1.6
 #
 
 # next we need to get average time to run lexpermute with diff sizes to select
@@ -413,7 +426,6 @@ verified for revision 1.6
     - a couple additional uses of printseq() instead of longer code
 
 #
-# revision 1.6
 # checkpoint on timvm: 25.63 mil checks/sec
 # 	oh geez, slowing down by 1/3.7 -- from 93 mil checks/sec
 # Elapsed 2737.3 seconds
@@ -429,6 +441,9 @@ verified for revision 1.6
 # ...what if we #define out the extra timing code?
 # ...that makes it around 80 mil checks/sec.  Still slower, but not so bad.
 #
+#   END: Version 1.6
+# START: Version 1.6.2
+#
 # right, so timecheck on timmbp:
 # % time ( repeat 3 ./weirdlabsolve-Darwin1.5 -n 8 )
 # v1.5; 91 mil checks/sec; 167.53s user   0.09s system 99% cpu  2:47.71 total
@@ -443,7 +458,10 @@ revision 1.6.2
   help the speed
 - add a third mainline debug level that prints the puzzle board as it works
 
-# time to implement threads
+#
+#   END: Version 1.6.2
+# START: Version 1.7
+#
 
 - Make new permutation algo thread-ready?
     make it thread-ready by accumulating counters and things to print at level
@@ -514,6 +532,10 @@ revision 1.6.2
 #			perl	1.1   1.2   1.3   1.4   1.5   1.6   1.7
 # timmbp (4cpu):	0.014	4.9                    91.5        69.1
 # timvm (1cpu):		0.016	4.3   4.3   6.1 *92.x  86.8  25.6  
+#
+#   END: Version 1.7
+# START: Version 1.8
+#
 
 - OK, so now 'unwind' the procedure calls so that lexpermute_last6 does
   permutations with 6 steps without any subroutine calls
@@ -542,7 +564,7 @@ that shows that v1.5 has 2487135 extra lines (about 50%) that continue on
 solutions starting with move 0; but 1.8 has 2487133 extra lines that work on
 solutions starting with move 1; this is probably good enough.
 
-Let's look at the timing again, because I think we're better now.
+Let us look at the timing again, because I think we are better now.
 
 #
 # revision 1.8
@@ -561,13 +583,13 @@ Let's look at the timing again, because I think we're better now.
 for j in 1 2 3 4 5 6 7 8 9; do echo start j$j;
 (repeat 3 ./weirdlabsolve -j $j -n 8) | egrep "steps:|Total time"; done
 #
-# comments for revision 1.9
+# comments for revision 1.8
 - added lexpermute_seven subroutine that 'unrolls' the recursion from seven
   steps down to one step, to improve speeds.  also added appropriate calling
   of it.
 - incrase THREADLEVEL to 8, which means threading steps 7-1 takes 4 sec.
   Should probably change this to 9 or 10.
-- create flipout(), which acts like flip() only doesn't flip the puzzle
+- create flipout(), which acts like flip() only does not flip the puzzle
   in-place, but instead returns the resulting puzzle value
 - improve accuraccy of stopping if stop-after-N-iterations argument is used
 - slight tweaks to the debugtiming code, it now works with threading. also
@@ -577,9 +599,50 @@ for j in 1 2 3 4 5 6 7 8 9; do echo start j$j;
 multiple threads.  next try making flipout() inline code via macro
 
 #
-# start: revision 1.8.1
+#   END: Version 1.8
+# START: Version 1.8.1/2
+# 
+# *sigh* that slows it down, again.
 #
+    time ./weirdlabsolve-Darwin1.5 -d -d -d -n 8 | \
+    head -5000000 > ~/Downloads/weirdout-1.5-n8_500000.txt
 
+    time ./weirdlabsolve -d -d -d -n 8 -S 1 -j 1 | \
+    head -5000000 > ~/Downloads/weirdout-1.8-n8_500000.txt
+
+    diff -uwb weirdout-1.*n8* | cdiff
+
+...meanwhile I've implemented a testbed and re-time tested all the code back
+to 1.4, and the timing results are NOT the same as I recorded here.  I don't
+understand that either.
+
+So I've implemented it with a #define as to whether the macro is on or off.
+with FLIPMACRO on,  timvm is faster
+with FLIPMACRO off, timcent & timmbp are faster
+
+anyway, onwards...
+
+Version 1.8.2
+- turn flip() into a macro, to minimize context switches from within
+  lexpermute_seven.  thought this would improve speed, but it only does on one
+  host out of three?!  Set its use within lexpermute_seven as a macro
+  FLIPMACRO.  Leaving it off for now.
+- add a version string and print the version at start. also a version-only argument.
+- remove a bunch of debug code from lexpermute_seven
+#
+#   END: Version 1.8.2
+# START: Version 1.9
+# 
+Right, I don't know why the macro didn't work, but it made me realize that
+flip() is too complicated.  Each position being flipped represents an XOR of
+3-5 bit positions, or just the XOR of the current puzzle value by a
+flip-position-X value.  Now implement a flip lookup table, and make flip a
+macro that XORs "puzzle" with flipmap[position].
+
+#
+#   END: Version 1.9
+# START: Version 1.10
+# 
 - New code takes startpoint argument, with value between 0 and N!
   ...ok no i cannot find an easy O(1) formula for this, though I saw one in one
   of my other searches on stackoverflow.
