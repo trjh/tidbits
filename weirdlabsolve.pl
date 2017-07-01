@@ -541,6 +541,7 @@ revision 1.6.2
   permutations with 6 steps without any subroutine calls
 
 check processing & steps:
+
     time ./weirdlabsolve-Darwin1.5 -d -d -d -n 8 | \
     head -5000000 > ~/Downloads/weirdout-1.5-n8_500000.txt
 
@@ -552,10 +553,12 @@ check processing & steps:
 right that checks out, what about complete coverage of steps when running in
 parallel?
 
-    time ./weirdlabsolve-Darwin1.5 -d -d -n 8 2>&1 | head -5000000 | \
+    time ./weirdlabsolve-Darwin1.5 -d -d -n 8 2>&1 | \
+    head -5000000 | \
     sort > ~/Downloads/weirdout-1.5-steps.txt
 
-    time ./weirdlabsolve -d -d -n 8 -j 2 2>&1 | head -5000000 | \
+    time ./weirdlabsolve -d -d -n 8 -j 2 2>&1 | \
+    head -5000000 | \
     sort > ~/Downloads/weirdout-1.8-steps.txt
 
     diff weirdout-1.*steps* | cut -d, -f 1-3 | sort | uniq -c
