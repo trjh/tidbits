@@ -15,6 +15,7 @@
 #ifndef lint
 static char *RCSid = "$Header: /Users/tim/proj/src/weirdlab/RCS/weirdsolve.c,v 1.5 2017/07/01 22:39:45 tim Exp tim $";
 #endif
+static char *Version = "1.8.2_NOFLIPMACRO";
 
 #include <unistd.h>
 #include <stdlib.h>
@@ -47,6 +48,7 @@ int debug = 0;
 /* #define EXTRADEBUG2 -- print debug steps from flip() */
 /* #define DEBUGTIMING -- track timings of execution at each level of
 			  recursion */
+/* #define FLIPMACRO	* use macro for inline flipping */
 
 /* possible moves */
 static int moves[SIZE] = { 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,
@@ -151,6 +153,15 @@ void printseq(FILE *stream, char *, int sequence[], int size, int extra);
 void timecheck();
 void print_lexargs(char *intro, LEXPERMUTE_ARGS *a);
 
+/* macro version of flip -- works on a long directly, not the pointer */
+#define flipm(puzzle, pos) { \
+    puzzle = puzzle ^ pos2bit[pos]; \
+    if ((pos % WIDTH) < WIDTHLESS1)  { puzzle= puzzle ^ pos2bit[pos+1]; }; \
+    if ((pos % WIDTH) > 0)           { puzzle= puzzle ^ pos2bit[pos-1]; }; \
+    if ((pos / WIDTH) < HEIGHTLESS1) { puzzle= puzzle ^ pos2bit[pos+WIDTH];} \
+    if ((pos / WIDTH) > 0)	     { puzzle= puzzle ^ pos2bit[pos-WIDTH];} \
+    }
+    
 /* int errno; */
 
 int main(int argc, char *argv[])
@@ -172,13 +183,16 @@ int main(int argc, char *argv[])
 	/* process options */
 	int flags, opt;
 	extern char *optarg;
-	while ((opt = getopt(argc, argv, "dtj:n:S:")) != -1) {
+	while ((opt = getopt(argc, argv, "dtvj:n:S:")) != -1) {
 	    switch(opt) {
 	    case 'd':
 		debug++;
 		break;
 	    case 't':
 		testmode(&puzzle);
+		exit(0);
+	    case 'v':
+		printf("Version %s\n", Version);
 		exit(0);
 	    case 'n':
 		steps = atoi(optarg);
@@ -202,6 +216,8 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	    }
 	}
+
+	printf("Version %s\n", Version);
 	if (debug>0) {
 	    printf("debug level: %d\n", debug);
 	}
@@ -651,91 +667,86 @@ void *lexpermute_seven(void *argstruct)
       /* mark our place in the map -- at this level we don't need to worry
        * about stepping on any other level */
       setmap[index[7]] = 7;
-int m;
-/*
-m=7;
-printf("index[%d] = %d, setmap: ", m, index[m]);
-printseq(stdout, "", setmap, 7, -1);
-*/
 
       /* update puzzle */
+      #ifdef FLIPMACRO
+      mypuzzle[7] = a->puzzle;
+      flipm(mypuzzle[7], a->set[index[7]]);
+      #else
       mypuzzle[7] = flipout(a->puzzle, a->set[index[7]]);
+      #endif
 
       for (index[6] = 0; index[6] < a->setsize; index[6]++) {
 	/* skip this index value if it is in use upstream */
 	if (setmap[index[6]] != 0) { continue; }
 	setmap[index[6]] = 6;
 
+	#ifdef FLIPMACRO
+	mypuzzle[6] = mypuzzle[7];
+	flipm(mypuzzle[6], a->set[index[6]]);
+	#else
 	mypuzzle[6] = flipout(mypuzzle[7], a->set[index[6]]);
-/*
-m=6;
-printf("index[%d] = %d, setmap: ", m, index[m]);
-printseq(stdout, "", setmap, 7, -1);
-*/
+	#endif
 
 	for (index[5] = 0; index[5] < a->setsize; index[5]++) {
 	  /* skip this index value if it is in use upstream */
 	  if (setmap[index[5]] != 0) { continue; }
 	  setmap[index[5]] = 5;
 
+	  #ifdef FLIPMACRO
+	  mypuzzle[5] = mypuzzle[6];
+	  flipm(mypuzzle[5], a->set[index[5]]);
+	  #else
 	  mypuzzle[5] = flipout(mypuzzle[6], a->set[index[5]]);
-/*
-m=5;
-printf("index[%d] = %d, setmap: ", m, index[m]);
-printseq(stdout, "", setmap, 7, -1);
-*/
-
+	  #endif
 
 	  for (index[4] = 0; index[4] < a->setsize; index[4]++) {
 	    /* skip this index value if it is in use upstream */
 	    if (setmap[index[4]] != 0) { continue; }
 	    setmap[index[4]] = 4;
 
+	    #ifdef FLIPMACRO
+	    mypuzzle[4] = mypuzzle[5];
+	    flipm(mypuzzle[4], a->set[index[4]]);
+	    #else
 	    mypuzzle[4] = flipout(mypuzzle[5], a->set[index[4]]);
-/*
-m=4;
-printf("index[%d] = %d, setmap: ", m, index[m]);
-printseq(stdout, "", setmap, 7, -1);
-*/
-
+	    #endif
 
 	    for (index[3] = 0; index[3] < a->setsize; index[3]++) {
 	      /* skip this index value if it is in use upstream */
 	      if (setmap[index[3]] != 0) { continue; }
 	      setmap[index[3]] = 3;
 
+	      #ifdef FLIPMACRO
+	      mypuzzle[3] = mypuzzle[4];
+	      flipm(mypuzzle[3], a->set[index[3]]);
+	      #else
 	      mypuzzle[3] = flipout(mypuzzle[4], a->set[index[3]]);
-/*
-m=3;
-printf("index[%d] = %d, setmap: ", m, index[m]);
-printseq(stdout, "", setmap, 7, -1);
-*/
-
+	      #endif
 
 	      for (index[2] = 0; index[2] < a->setsize; index[2]++) {
 		/* skip this index value if it is in use upstream */
 		if (setmap[index[2]] != 0) { continue; }
 		setmap[index[2]] = 2;
 
+		#ifdef FLIPMACRO
+	        mypuzzle[2] = mypuzzle[3];
+	        flipm(mypuzzle[2], a->set[index[2]]);
+		#else
 		mypuzzle[2] = flipout(mypuzzle[3], a->set[index[2]]);
-/*
-m=2;
-printf("index[%d] = %d, setmap: ", m, index[m]);
-printseq(stdout, "", setmap, 7, -1);
-*/
-
+		#endif
 
 		for (index[1]=0; index[1]<a->setsize; index[1]++)
 		{
 		    if (setmap[index[1]] != 0) { continue; }
 		    /* no need to mark the set map here, no downstream */
 
+		    #ifdef FLIPMACRO
+		    mypuzzle[1] = mypuzzle[2];
+		    flipm(mypuzzle[1], a->set[index[1]]);
+		    #else
 		    mypuzzle[1] = flipout(mypuzzle[2], a->set[index[1]]);
-/*
-m=1;
-printf("index[%d] = %d, setmap: ", m, index[m]);
-printseq(stdout, "", setmap, 7, -1);
-*/
+		    #endif
 
 		    *iterations += 1;
 		    if (mypuzzle[1] == PUZZLECOMPLETE) {
@@ -803,7 +814,15 @@ void testmode(long *puzzle)
 	for (j=0; j<SIZE; j++) {
 	    if (testseq[i][j] == -1) { break; }
 	    printf("flip %d:\n", testseq[i][j]);
-	    flip(puzzle, testseq[i][j]);
+
+	    #ifdef FLIPMACRO
+	    flipm(*puzzle, testseq[i][j]);
+	    #else
+	    long temppuzzle = flipout(*puzzle, testseq[i][j]);
+	    printpuzzle(&temppuzzle);
+	    *puzzle = temppuzzle;
+	    #endif
+
 	    printpuzzle(puzzle);
 	}
     }
@@ -847,6 +866,9 @@ void timecheck()
     }
 }
 
+/*
+ * now in macro form as flipm() above, better to use that
+ */
 void flip(long *puzzle, int position)
 {
     /*
@@ -862,8 +884,7 @@ void flip(long *puzzle, int position)
     # 5 6 7 8 9
     # A B C D E
     # F G H I J
-    */
-    /*
+
     puzzle[HEIGHT*WIDTH]
     x+1, P+1 -- no for 4,9,14,19 P%WIDTH=WIDTH-1
     x-1, P-1 -- no for 0,5,10,15 P%WIDTH=0
@@ -912,6 +933,7 @@ void flip(long *puzzle, int position)
 
 /* this version of flip does not modify puzzle, but returns the flipped puzzle
  */
+
 long flipout(long puzzle, int position)
 {
     /* flip position itself */
