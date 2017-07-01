@@ -15,7 +15,7 @@
 #ifndef lint
 static char *RCSid = "$Header: /Users/tim/proj/src/weirdlab/RCS/weirdsolve.c,v 1.5 2017/07/01 22:39:45 tim Exp tim $";
 #endif
-static char *Version = "1.9.1";
+static char *Version = "1.9.2";
 
 #include <unistd.h>
 #include <stdlib.h>
@@ -25,17 +25,6 @@ static char *Version = "1.9.1";
 #include <getopt.h>
 #include <string.h>
 #include <pthread.h>
-
-#define BP "%c%c%c%c%c%c%c%c"
-#define B(byte)  \
-	(byte & 0x80 ? '1' : '0'), \
-	(byte & 0x40 ? '1' : '0'), \
-	(byte & 0x20 ? '1' : '0'), \
-	(byte & 0x10 ? '1' : '0'), \
-	(byte & 0x08 ? '1' : '0'), \
-	(byte & 0x04 ? '1' : '0'), \
-	(byte & 0x02 ? '1' : '0'), \
-	(byte & 0x01 ? '1' : '0') 
 
 /*
  * definitions
@@ -59,7 +48,6 @@ int debug = 0;
 /* #define EXTRADEBUG2 -- print debug steps from flip() */
 /* #define DEBUGTIMING -- track timings of execution at each level of
 			  recursion */
-/* #define FLIPMACRO	* use macro for inline flipping */
 
 /* possible moves */
 static int moves[SIZE] = { 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,
@@ -695,106 +683,56 @@ void *lexpermute_seven(void *argstruct)
        * about stepping on any other level */
       move=(1 << index[7]);
       setmap |= move; /* set bit representing occupied move */
-/* printf("index 7 = %d, setmap "BP"\n", index[7], B(setmap));
-*/
 
       /* update puzzle */
-      #ifdef FLIPMACRO
-      mypuzzle[7] = a->puzzle;
-      flipm(mypuzzle[7], a->set[index[7]]);
-      #else
       mypuzzle[7] = flipout(a->puzzle, a->set[index[7]]);
-      #endif
 
       for (index[6] = 0; index[6] < a->setsize; index[6]++) {
 	/* skip this index value if it is in use upstream */
 	move=(1 << index[6]);
 	if (setmap & move) { continue; }
 	setmap |= move;
-/* printf("index 6 = %d, setmap "BP"\n", index[6], B(setmap));
-*/
 
-	#ifdef FLIPMACRO
-	mypuzzle[6] = mypuzzle[7];
-	flipm(mypuzzle[6], a->set[index[6]]);
-	#else
 	mypuzzle[6] = flipout(mypuzzle[7], a->set[index[6]]);
-	#endif
 
 	for (index[5] = 0; index[5] < a->setsize; index[5]++) {
 	  /* skip this index value if it is in use upstream */
 	  move=(1 << index[5]);
 	  if (setmap & move) { continue; }
 	  setmap |= move;
-/* printf("index 5 = %d, setmap "BP"\n", index[5], B(setmap));
-*/
 
-	  #ifdef FLIPMACRO
-	  mypuzzle[5] = mypuzzle[6];
-	  flipm(mypuzzle[5], a->set[index[5]]);
-	  #else
 	  mypuzzle[5] = flipout(mypuzzle[6], a->set[index[5]]);
-	  #endif
 
 	  for (index[4] = 0; index[4] < a->setsize; index[4]++) {
 	    /* skip this index value if it is in use upstream */
 	    move=(1 << index[4]);
 	    if (setmap & move) { continue; }
 	    setmap |= move;
-/* printf("index 4 = %d, setmap "BP"\n", index[4], B(setmap));
-*/
 
-	    #ifdef FLIPMACRO
-	    mypuzzle[4] = mypuzzle[5];
-	    flipm(mypuzzle[4], a->set[index[4]]);
-	    #else
 	    mypuzzle[4] = flipout(mypuzzle[5], a->set[index[4]]);
-	    #endif
 
 	    for (index[3] = 0; index[3] < a->setsize; index[3]++) {
 	      /* skip this index value if it is in use upstream */
 	      move=(1 << index[3]);
 	      if (setmap & move) { continue; }
 	      setmap |= move;
-/* printf("index 3 = %d, setmap "BP"\n", index[3], B(setmap));
-*/
 
-	      #ifdef FLIPMACRO
-	      mypuzzle[3] = mypuzzle[4];
-	      flipm(mypuzzle[3], a->set[index[3]]);
-	      #else
 	      mypuzzle[3] = flipout(mypuzzle[4], a->set[index[3]]);
-	      #endif
 
 	      for (index[2] = 0; index[2] < a->setsize; index[2]++) {
 		/* skip this index value if it is in use upstream */
 		move=(1 << index[2]);
-/* printf("index 2 pre:  "BP" attempt index %d move 0x%04x\n", B(setmap), index[2],
-move);
-*/
 		if (setmap & move) { continue; }
 		setmap |= move;
-/* printf("index 2 = %d, setmap "BP"\n", index[2], B(setmap));
-*/
 
-		#ifdef FLIPMACRO
-	        mypuzzle[2] = mypuzzle[3];
-	        flipm(mypuzzle[2], a->set[index[2]]);
-		#else
 		mypuzzle[2] = flipout(mypuzzle[3], a->set[index[2]]);
-		#endif
 
 		for (index[1]=0; index[1]<a->setsize; index[1]++)
 		{
 		    if (setmap & (1 << index[1])) { continue; }
 		    /* no need to mark the set map here, no downstream */
 
-		    #ifdef FLIPMACRO
-		    mypuzzle[1] = mypuzzle[2];
-		    flipm(mypuzzle[1], a->set[index[1]]);
-		    #else
 		    mypuzzle[1] = flipout(mypuzzle[2], a->set[index[1]]);
-		    #endif
 
 		    iterations++;
 		    if (mypuzzle[1] == PUZZLECOMPLETE) {
@@ -819,11 +757,7 @@ move);
 		    }
 		} /* end for index 1 */
 
-/* printf("index 2 setmap "BP"\n", B(setmap));
-*/
 		setmap &= ~(1 << index[2]); /* the tilde is a not */
-/* printf("index 2 clear  "BP" of %d\n", B(setmap), index[2]);
-*/
 	      } /* end for index 2 */
 
 	      setmap &= ~(1 << index[3]);
