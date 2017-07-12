@@ -368,8 +368,134 @@ further steps:
 # revision 1.4
 # checkpoint on timvm: 92 mil checks/sec [15x improvement over 6.06mil]
 
+    - use clock() for more precise timings, clean up timing a bit
+    - make printing of sequences into a subroutine
+    - add more debug code
+
 #
 # revision 1.5
+#
+
+# next we need to get average time to run lexpermute with diff sizes to select
+# optimal thread length
+typedef struct permtimes PERMTIMES;
+struct permtimes {
+    int steps;			/* this struct measures lexpermute calls with
+				   this number of steps */
+    double totalclocks;		/* total clock time for all calls measured */
+    int calls;			/* number of times lexpermute called */
+};
+PERMTIMES perm_sizing[SIZE+1];	/* measure calls from 1-SIZE */
+# after call
+perm_sizing[steps]->totalclocks += clocks
+perm_sizing[steps]->calls++;
+perm_sizing[steps]->steps = steps;
+
+pre-check:
+./weirdlabsolve -d -d -n 4 > ~/Downloads/weirdout-1.5-n4.txt
+# will this match when we re-arrange things and thread it?
+# -n 8 and -n 7 had way too many lines...
+verified for revision 1.6
+
+    - re-arranged progress checking via outputcalls, as it will not work with
+      threading -- now use permutecount and checkinterval.  Also move
+      timecheck code inot a seperate subroutine for code clarity.
+    - modify lexpermute() to take and return a void* in preparation for
+      threading.  this includes setting up structure to pass to lexpermute()
+      containing all the arguments.
+    - add code to figure out average time to execute lexpermute with different
+      step values.  fun but should be #defined out of 'production' code
+    - cleaned out a lot of old unused code -- output(), generate(),
+      bits of main() -- this means that testmode() modified to no longer use
+      output()
+    - new subroutine lexrun() to make main() cleaner to read
+    - a couple additional uses of printseq() instead of longer code
+
+#
+# revision 1.6
+# checkpoint on timvm: 25.63 mil checks/sec
+# 	oh geez, slowing down by 1/3.7 -- from 93 mil checks/sec
+# Elapsed 2737.3 seconds
+# Timing per level:
+# steps   1 average          1.2 clocks/run (  0.0 min/run)
+# steps   2 average          6.3 clocks/run (  0.0 min/run)
+# steps   3 average         91.3 clocks/run (  0.0 min/run)
+# steps   4 average       1379.5 clocks/run (  0.0 min/run)
+# steps   5 average      22167.0 clocks/run (  0.0 min/run)
+# steps   6 average     379685.9 clocks/run (  0.4 min/run)
+# steps   7 average    7273930.7 clocks/run (  7.3 min/run)
+# steps   8 average  240836915.3 clocks/run ( 240.8 min/run)
+# ...what if we #define out the extra timing code?
+# ...that makes it around 80 mil checks/sec.  Still slower, but not so bad.
+#
+# right, so timecheck on timmbp:
+# % time ( repeat 3 ./weirdlabsolve-Darwin1.5 -n 8 )
+# v1.5; 91 mil checks/sec; 167.53s user   0.09s system 99% cpu  2:47.71 total
+# v1.6; 14 mil checks/sec; 478.46s user 610.78s system 99% cpu 18:09.69 total
+# v1.6.1; disable debug timing
+#       67 mil checks/sec; 225.26s user   0.09s system 99% cpu  3:45.46 total
+# v1.6.2; count iterations with register variable while in lexpermute()
+#	64 mil checks/sec; 236.10s user   0.20s system 99% cpu  3:56.51 total
+# v1.7: 39 mil checks/sec; 
+#	what the hell? it's got near 100% cpu usage but...
+#	-j 1 69 mil checks/sec; -j 2 65 mil checks/sec
+revision 1.6.2
+- hide away lexpermute timings with a #define, as it greatly slows things down
+- experiment with using a register value to track iterations.  it doesn not
+  help the speed
+- add a third mainline debug level that prints the puzzle board as it works
+
+# time to implement threads
+
+- Make new permutation algo thread-ready?
+    make it thread-ready by accumulating counters and things to print at level
+    N-2?
+
+    http://timmurphy.org/2010/05/04/pthreads-in-c-a-minimal-working-example/
+    pseudocode:
+	- if (steps == steps_to_thread_at) {
+	    allocate THREADS pthread structures
+	    push 0...THREADS-1 onto threadstack
+	    complete[THREADS] = [0...0]
+	    for each element of set
+		if (threadstack[0] != -1) {
+		    my thread = pop threadstack
+		    # prepare next lexpermute call
+		    start lexpermute in my thread
+		}
+		my freed=0
+		foreach (thread marked complete) {
+		    # we'd use pthread_join_np if linux-only
+		    join thread
+		    push thread onto threadstack
+		    complete[thread] = 0
+		    freed++
+		    incremet global completed with thread results
+		}
+		if ((freed == 0) && (threadstack[0] == -1)) {
+		    sleep 1
+		}
+	    }
+    actually no easy way to tell what pthread id is from the parent, so just
+    give up on the queuing thing for now.
+	    
+    in lexpermute,
+	if i im a thread (pthread_self())
+	- do not increment global completed var
+	https://stackoverflow.com/questions/1130018/unix-portable-atomic-operations
+	- use lock to update complete[THREADS] before returning
+	https://stackoverflow.com/questions/10879420/using-of-shared-variable-by-10-pthreads
+	https://www.cs.nmsu.edu/~jcook/Tools/pthreads/pthread_cond.html
+	https://stackoverflow.com/questions/2156353/how-do-you-query-a-pthread-to-see-if-it-is-still-running
+	https://stackoverflow.com/questions/3673208/pthreads-if-i-increment-a-global-from-two-different-threads-can-there-be-sync
+
+
+    ./weirdlabsolve-Linux1.5 -d -d -n 4 | sort > /tmp/out1.5_lvl4_sort.txt
+    ./weirdlabsolve -d -d -n 4 | sort > /tmp/out1.7_lvl4_sort.txt
+    /bin/rm stderr.out /tmp/out1.7_lvl4_sort.txt; \
+    ./weirdlabsolve -d -d -n 4 2>stderr.out | sort > /tmp/out1.7_lvl4_sort.txt
+    # done, finally works!
+
 
 - New code takes startpoint argument, with value between 0 and N!
   ...ok no i cannot find an easy O(1) formula for this, though I saw one in one
@@ -433,65 +559,6 @@ further steps:
   ..and when finished, we set STARTSTEP[stepsleft]=0;
     
 
-# next we need to get average time to run lexpermute with diff sizes to select
-# optimal thread length
-typedef struct permtimes PERMTIMES;
-struct permtimes {
-    int steps;			/* this struct measures lexpermute calls with
-				   this number of steps */
-    double totalclocks;		/* total clock time for all calls measured */
-    int calls;			/* number of times lexpermute called */
-};
-PERMTIMES perm_sizing[SIZE+1];	/* measure calls from 1-SIZE */
-# after call
-perm_sizing[steps]->totalclocks += clocks
-perm_sizing[steps]->calls++;
-perm_sizing[steps]->steps = steps;
-
-
-pre-check:
-./weirdlabsolve -d -d -n 7 > ~/Downloads/full-level8.txt
-# will this match when we re-arrange things and thread it?
-
-- Make new permutation algo thread-ready?
-    make it thread-ready by accumulating counters and things to print at level
-    N-2?
-
-    http://timmurphy.org/2010/05/04/pthreads-in-c-a-minimal-working-example/
-    pseudocode:
-	- if (steps == steps_to_thread_at) {
-	    allocate THREADS pthread structures
-	    push 0...THREADS-1 onto threadstack
-	    complete[THREADS] = [0...0]
-	    for each element of set
-		if (threadstack[0] != -1) {
-		    my thread = pop threadstack
-		    # prepare next lexpermute call
-		    start lexpermute in my thread
-		}
-		my freed=0
-		foreach (thread marked complete) {
-		    # we'd use pthread_join_np if linux-only
-		    join thread
-		    push thread onto threadstack
-		    complete[thread] = 0
-		    freed++
-		    incremet global completed with thread results
-		}
-		if ((freed == 0) && (threadstack[0] == -1)) {
-		    sleep 1
-		}
-	    }
-	    
-    in lexpermute,
-	if i im a thread (pthread_self())
-	- do not increment global completed var
-	https://stackoverflow.com/questions/1130018/unix-portable-atomic-operations
-	- use lock to update complete[THREADS] before returning
-	https://stackoverflow.com/questions/10879420/using-of-shared-variable-by-10-pthreads
-	https://www.cs.nmsu.edu/~jcook/Tools/pthreads/pthread_cond.html
-	https://stackoverflow.com/questions/2156353/how-do-you-query-a-pthread-to-see-if-it-is-still-running
-	https://stackoverflow.com/questions/3673208/pthreads-if-i-increment-a-global-from-two-different-threads-can-there-be-sync
 
 https://stackoverflow.com/questions/5248915/execution-time-of-c-program
 
