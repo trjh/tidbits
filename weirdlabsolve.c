@@ -23,6 +23,7 @@ static char *RCSid = "$Header: /Users/tim/proj/src/weirdlab/RCS/weirdsolve.c,v 1
 #include <time.h>
 #include <getopt.h>
 #include <string.h>
+#include <pthread.h>
 
 /*
  * definitions
@@ -41,6 +42,11 @@ static char *RCSid = "$Header: /Users/tim/proj/src/weirdlab/RCS/weirdsolve.c,v 1
  */
 
 int debug = 0;
+
+/* #define EXTRADEBUG1 -- print more checkpoint details */
+/* #define EXTRADEBUG2 -- print debug steps from flip() */
+/* #define DEBUGTIMING -- track timings of execution at each level of
+			  recursion */
 
 /* possible moves */
 static int moves[SIZE] = { 0,  1,  2,  3,  4,  5,  6,  7,  8,  9,
@@ -63,6 +69,12 @@ long LastCountCheck = 0;	 /* the last permcount value when we did a
 long NextCountCheck=CHECKINTERVAL; /* goal for next permcount value when we do
 				      a timecheck */
 
+/* value to determine where to thread, and which threads are complete */
+#define THREADLEVEL 7		/* do threading if steps == THREADLEVEL */
+/* #define THREADS 4	*/	/* define # of threads here for now */
+int Threads = 4;	
+pthread_t tid_main;		/* thread id of main */
+
 #define SCALE 1000000		/* scale iterations in millions */
 #define SCALET "mil"
 
@@ -80,8 +92,12 @@ int testseq[5][20] = {
 clock_t start;			/* start of the entire program */
 clock_t lasttimecheck;		/* start of last timecheck */
 #define GUESSRATE 80060000	/* last # iterations/sec */
+#define GUESSRATEHOURS GUESSRATE*3600	/* last # iterations/hour */
 
 /* structure for executing a run -- needed for threading */
+/* now store the solution & set arrays directly in the structure, to make
+ * things a little cleaner, code-wise
+ */
 typedef struct lexp_run LEXPERMUTE_ARGS;
 struct lexp_run {
     /* i'm a little confused about what Darwin & Linux want in terms of a
@@ -93,18 +109,23 @@ struct lexp_run {
      * ...solution seems a bit ugly:
      * downstream.solution = &mysolutionpath[0];
      */
-    int *solution;	/* ordered set of values already applied to puzzle,
+    int solution[SIZE];	/* ordered set of values already applied to puzzle,
 			   generally of size SIZE, but terminated with a -1.
 			   i.e. there may be 20 elements, but if the third
 			   value in the array is -1, then only two moves have
 			   been made already */
     long puzzle;	/* state of puzzle after solution[] applied */
-    int *set;		/* set of possible values to use to solve the rest of
+    int set[SIZE];	/* set of possible values to use to solve the rest of
 			   the puzzle */
     int setsize;	/* number of elements in set[] */
     int steps;		/* number of steps of solution left to try */
 };
+#define LEXP_SETSIZE SIZE*sizeof(int)
+			/* macro so that we don't do this as a computation
+			 * later when the value is essentially static
+			 */
 
+#ifdef DEBUGTIMING
 /* structure for lexpermute timing */
 typedef struct permtimes PERMTIMES;
 struct permtimes {
@@ -114,6 +135,7 @@ struct permtimes {
     int calls;			/* number of times lexpermute called */
 };
 PERMTIMES lextiming[SIZE];	/* make this a global for up to SIZE steps */
+#endif
 
 /* predeclare functions */
 #define resetpuzzle(puzzle) *puzzle=0x00002940
@@ -123,7 +145,9 @@ void flip(long *puzzle, int position);
 void testmode(long *puzzle);
 void lexrun(LEXPERMUTE_ARGS *la);
 void *lexpermute(void *argstruct);
-void printseq(char *, int sequence[], int size, int extra);
+void printseq(FILE *stream, char *, int sequence[], int size, int extra);
+void timecheck();
+void print_lexargs(char *intro, LEXPERMUTE_ARGS *a);
 
 /* int errno; */
 
@@ -137,6 +161,7 @@ int main(int argc, char *argv[])
 			   15 16 17 18 19    0x8000 0x10000 0x20000 0x40000 ...
 			*/
 	int steps = SIZE;
+	tid_main = pthread_self();
 
 	/* initialize puzzle and timers */
 	resetpuzzle(&puzzle);
@@ -145,7 +170,7 @@ int main(int argc, char *argv[])
 	/* process options */
 	int flags, opt;
 	extern char *optarg;
-	while ((opt = getopt(argc, argv, "dtn:S:")) != -1) {
+	while ((opt = getopt(argc, argv, "dtj:n:S:")) != -1) {
 	    switch(opt) {
 	    case 'd':
 		debug++;
@@ -156,6 +181,9 @@ int main(int argc, char *argv[])
 	    case 'n':
 		steps = atoi(optarg);
 		break;
+	    case 'j':
+		Threads = atoi(optarg);
+		break;
 	    case 'S':
 		StopAfter = atoi(optarg);
 		break;
@@ -164,6 +192,7 @@ int main(int argc, char *argv[])
 				"\t-d	: increase debug value\n"
 				"\t-t	: test mode -- just show details of "
 					 "processing 5 sequences of 20\n"
+				"\t-j T : number of threads to use\n"
 				"\t-n N	: examine all solutions with N steps\n"
 				"\t-S M	: stop after M iterations\n",
 				argv[0]);
@@ -179,23 +208,24 @@ int main(int argc, char *argv[])
 	 * efficient with its calls to flip().
 	 */
 	int j;	/* counter */
-	int solutionpath[SIZE];
-	solutionpath[0] = -1;
 
 	LEXPERMUTE_ARGS la;
-	    la.solution = solutionpath;
+	    la.solution[0] = -1;
 	    la.puzzle = puzzle;
-	    la.set = moves;
+	    memcpy(la.set,moves,LEXP_SETSIZE);
 	    la.setsize = SIZE;
 
+	#ifdef DEBUGTIMING
 	/* initialize lextiming */
 	for (j=0; j<SIZE; j++) {
 	    lextiming[j].steps = j;
 	    lextiming[j].totalclocks = 0;
 	    lextiming[j].calls = 0;
 	}
+	#endif
 
-	/* if 'steps' was set on the command line, do the run with that many
+	/*
+	 * if 'steps' was set on the command line, do the run with that many
 	 * steps
 	 */
 	if (steps != SIZE) {
@@ -214,6 +244,8 @@ int main(int argc, char *argv[])
 	}
 
 	printf("Elapsed %.1f seconds\n",(double)(clock()-start)/CLOCKS_PER_SEC);
+
+	#ifdef DEBUGTIMING
 	printf("Timing per level:\n");
 	for (j=1; j<SIZE; j++) {
 	    if (lextiming[j].calls == 0) { /* we're done */
@@ -230,9 +262,11 @@ int main(int argc, char *argv[])
 		lextiming[j].totalclocks, lextiming[j].calls);
 	    #endif
 	}
+	#endif
 }
 
-/* lexrun -- run lexpermute with top-level timing and print output code.  this
+/*
+ * lexrun -- run lexpermute with top-level timing and print output code.  this
  * happens two different times in main(), so tidier to keep it in a subroutine
  */
 void lexrun(LEXPERMUTE_ARGS *la)
@@ -250,13 +284,16 @@ void lexrun(LEXPERMUTE_ARGS *la)
     printf("steps: %d, solution space: %.2f [%ld] "SCALET", "
 	   "estimate in hours: %.1f\n", la->steps, (double) solspace/SCALE,
 	   solspace,
-	   (double) solspace / (GUESSRATE*3600));
+	   (double) solspace / (double) GUESSRATEHOURS);
 
     startsize=clock();
     iterations = (long *)lexpermute(la);
     endsize=clock();
+
+    #ifdef DEBUGTIMING
     lextiming[(la->steps)-1].totalclocks += endsize - startsize;
     lextiming[(la->steps)-1].calls += 1;
+    #endif
 
     double elapsed = (double)(endsize - startsize) / CLOCKS_PER_SEC;
 
@@ -300,25 +337,30 @@ void *lexpermute(void *argstruct)
 			 * phtreads
 			 */
     long mypuzzle;	/* local update of puzzle */
-    int i, j;		/* counters */
-    /* #define EXTRADEBUG1 */
+    int set_i;		/* set index pointer */
+    register int j;	/* counter */
+    char stemp[80];	/* temporary string array for printing things */
 
     if (a->steps == 1) {
 	/* we have reached the end, check the result(s) & return */
-	for (i=0; i<a->setsize; i++) {
+	for (set_i=0; set_i<a->setsize; set_i++) {
 	    #ifdef EXTRADEBUG1
-	    printf("final step, testing flip of pos %d\n", a->set[i]);
+	    printf("final step, testing flip of pos %d\n", a->set[set_i]);
 	    #endif
-	    if (debug > 1) {
-		printseq("finishing sequence: ", a->solution, SIZE, a->set[i]);
-	    }
 	    
-	    *iterations += 1;
+	    *iterations += 1; /* */
 	    mypuzzle = a->puzzle;
-	    flip(&mypuzzle, a->set[i]);
+	    flip(&mypuzzle, a->set[set_i]);
+	    if (debug > 1) {
+		printseq(stdout, "finishing sequence: ",
+			 a->solution, SIZE, a->set[set_i]);
+		if (debug > 2) {
+		    printpuzzle(&mypuzzle);
+		}
+	    }
 	    if (mypuzzle == PUZZLECOMPLETE) {
-		printseq("\nsuccess with sequence: ", a->solution, SIZE,
-						      a->set[i]);
+		printseq(stdout, "\nsuccess with sequence: ",
+			 a->solution, SIZE, a->set[set_i]);
 		printpuzzle(&mypuzzle);
 	    }
 
@@ -331,63 +373,160 @@ void *lexpermute(void *argstruct)
 	return (void *) iterations;
     }
 
-    /* at this point if steps == StepsToThreadAt, we'll pass all downstream
-     * recursive calls to new threads.  But that'll be implemented after we
-     * make sure this retooled lexpermute() works without them
+    /*
+     * If we're at THREADLEVEL, then dispatch downstream lexpermute() calls in
+     * parallel groups of THREADS.  Do some initialization here, and the
+     * thread mucking in the main loop.
      */
+    pthread_t me = pthread_self();
+    short isthread = (! pthread_equal(tid_main, me));
+
+    pthread_t mythreads[Threads];
+    int mythreadi = -1;			/* active threads are 0..mythreadi */
+
+    int mysetsize = a->setsize-1;
+					/* ensure that each thread is working
+					 * on its own array, not one shared
+					 * between threads
+					 */
+    LEXPERMUTE_ARGS downstream[Threads];
+					/* give each thread its own argument
+					 * structure */
+
+    #ifdef EXTRADEBUG1
+    sprintf(stemp, "--\n%sstarting lexpermute ", (isthread ? "*" : ""));
+    print_lexargs(stemp,a);
+    #endif
 
     /* if we're here, we have more than one step left to process */
-    for (i=0; i<a->setsize; i++) {
+    for (set_i=0; set_i<a->setsize; set_i++) {
 	/* at the top level, announce the start of each main branch */
 	if (a->solution[0] == -1) {
-	    printf("Starting top-level element %d\n", a->set[i]);
+	    printf("Starting top-level element %d\n", a->set[set_i]);
 	}
 
 	/* update puzzle */
 	mypuzzle = a->puzzle;
-	flip(&mypuzzle, a->set[i]);
+	flip(&mypuzzle, a->set[set_i]);
 
-	/* line up arguments for downstream lexpermute call */
-	int mysolutionpath[SIZE];
-	    /* copy solutionpath and this element into mysolutionpath */
-	    for (j = 0; j < SIZE; j++) {
-		if (a->solution[j] == -1) {
-		    mysolutionpath[j] = a->set[i];
-		    mysolutionpath[j+1] = -1;
-		    break;
-		}
-		/* else */
-		mysolutionpath[j] = a->solution[j];
+	/* set threadlevel, even if we aren't threading here */
+	if (a->steps == THREADLEVEL) {
+	    /* mythreadi contains the index of the last active mythread[] */
+	    mythreadi++;
+	    if (mythreadi >= Threads) {
+		/* we shouldn't get here */
+		fprintf(stderr, "Error counting threads\n"); exit(1);
 	    }
-	int myset[a->setsize-1];
-	    if (i>0) {
-		memcpy(&myset[0],&(a->set[0]),i*sizeof(int));
-	    }
-	    if (i<(a->setsize-1)) {
-		memcpy(&myset[i],&(a->set[i+1]),((a->setsize)-i-1)*sizeof(int));
-	    }
+	} else {
+	    mythreadi=0;
+	}
 
-	LEXPERMUTE_ARGS downstream;
-	downstream.solution = &mysolutionpath[0];
-	downstream.puzzle = mypuzzle;
-	downstream.set = myset;
-	downstream.setsize = (a->setsize)-1;
-	downstream.steps = (a->steps)-1;
+	/*
+	 * line up arguments for downstream lexpermute call
+	 */
+	/* copy solutionpath and this element into structure */
+	for (j = 0; j < SIZE; j++) {
+	    if (a->solution[j] == -1) {
+		downstream[mythreadi].solution[j] = a->set[set_i];
+		downstream[mythreadi].solution[j+1] = -1;
+		break;
+	    }
+	    /* else */
+	    downstream[mythreadi].solution[j] = a->solution[j];
+	}
+
+	/* set up downstream set of moves */
+	if (set_i>0) {
+	    memcpy(&(downstream[mythreadi].set[0]),
+		   &(a->set[0]),
+		   set_i*sizeof(int)
+		  );
+	}
+	if (set_i < mysetsize) {
+	    memcpy(&(downstream[mythreadi].set[set_i]),
+		   &(a->set[set_i+1]),
+		   (mysetsize-set_i)*sizeof(int)
+		  );
+	}
+
+	downstream[mythreadi].puzzle = mypuzzle;
+	downstream[mythreadi].setsize = mysetsize;
+	downstream[mythreadi].steps = (a->steps)-1;
 
 	#ifdef EXTRADEBUG1
-	printf("working element %d, set to pass down: ", a->set[i]);
-	for (j=0; j<(a->setsize-1); j++) { printf("%d, ",myset[j]); }
-	printf("\n");
+	sprintf(stemp, "stepsleft %d working elem %d, pass down set: ",
+		a->steps, a->set[set_i]);
+	printseq(stderr, stemp, downstream[mythreadi].set, mysetsize, -1);
 	#endif
 
-	clock_t startsize=clock();
-	long *tempiterations = (long *)lexpermute(&downstream);
-	clock_t endsize=clock();
-	*iterations += *tempiterations;
-	lextiming[(a->steps)-1].totalclocks += endsize - startsize;
-	lextiming[(a->steps)-1].calls += 1;
-	free(tempiterations);	/* don't need memory allocated in that call */
+	if (a->steps == THREADLEVEL) {
+	    /*
+	     * right, call multiple downstream lexpermutes via pthreads
+	     */
+	    #ifdef EXTRADEBUG1
+	    sprintf(stemp, "set_i %d invoking thread %d to process ",
+		    set_i, mythreadi);
+	    print_lexargs(stemp, &downstream[mythreadi]);
+	    #endif
+
+	    if (pthread_create(&(mythreads[mythreadi]), NULL,
+				 lexpermute, &downstream[mythreadi]))
+	    {
+		fprintf(stderr, "Error creating thread\n"); exit(1);
+	    }
+	    
+	    /*
+	     * now if we've used all our threads, or if we're at the end of i,
+	     * collect the threads
+	     */
+	    if ((mythreadi == (Threads-1)) || ((set_i+1) == (a->setsize))) {
+		int joini;
+		void *v_subiterations;
+		for (joini = 0; joini <= mythreadi; joini++) {
+		    #ifdef EXTRADEBUG1
+		    fprintf(stderr, "joining thread %d\n", joini);
+		    #endif
+		    if (pthread_join(mythreads[joini], &v_subiterations)) {
+			fprintf(stderr, "Error joining thread\n");
+		    }
+
+		    permutecount += *((long *) v_subiterations);
+		    if (permutecount > NextCountCheck) {
+			timecheck();
+			LastCountCheck = permutecount;
+			NextCountCheck = permutecount + CHECKINTERVAL;
+		    }
+		    *iterations += *((long *) v_subiterations);
+		    free(v_subiterations);
+		}
+		mythreadi = -1;
+	    } /* end collect threads */
+	} else {
+	    /* Non-threaded execution of downstream lexpermute() */
+	    #ifdef DEBUGTIMING
+	    clock_t startsize=clock();
+	    long *subiterations = (long *)lexpermute(&downstream[mythreadi]);
+	    clock_t endsize=clock();
+	    lextiming[(a->steps)-1].totalclocks += endsize - startsize;
+	    lextiming[(a->steps)-1].calls += 1;
+	    #else
+	    long *subiterations = (long *)lexpermute(&downstream[mythreadi]);
+	    #endif
+
+	    *iterations += *subiterations;
+	    free(subiterations);	/* don't need memory allocated in that call */
+	}
+
+    } /* end iteration over the set */
+
+    #ifdef EXTRADEBUG1
+    if ((a->steps == (THREADLEVEL-1)) && isthread) {
+	sprintf(stemp, "Completed thread %ld iterations %ld, ",
+	        (long) me, *iterations);
+	print_lexargs(stemp,a);
     }
+    #endif
+
     return (void *)iterations;
 
     /*
@@ -406,7 +545,7 @@ void testmode(long *puzzle)
 	printf("---restart---\n");
 	resetpuzzle(puzzle);
 	printpuzzle(puzzle);
-	printseq("trying ", testseq[i], SIZE, -1);
+	printseq(stdout, "trying ", testseq[i], SIZE, -1);
 	for (j=0; j<SIZE; j++) {
 	    if (testseq[i][j] == -1) { break; }
 	    printf("flip %d:\n", testseq[i][j]);
@@ -480,7 +619,6 @@ void flip(long *puzzle, int position)
     a flip is an XOR -- ^ in C parlance
     */
 
-/* #define EXTRADEBUG2 */
     /* flip position itself */
     *puzzle = *puzzle ^ pos2bit[position];
     #ifdef EXTRADEBUG2
@@ -532,21 +670,69 @@ void printpuzzle(long *puzzle)
 }
 
 /* print out a sequence -- and an extra element at the end if non-zero  */
-void printseq(char *intro, int sequence[], int size, int extra)
+void printseq(FILE *stream, char *intro, int sequence[], int size, int extra)
 {
-    int i;
+    register int i;
+    char out[160];	/* construct output into this string, then print */
+    char tmp[160];	/* temporary for sprintf */
 
-    /* printf("sequence: "); */
-    printf("%s", intro);
+    strcpy(out, intro);
 
-    /* don't print a trailing comma at the end */
-    printf("%d", sequence[0]);
-    for(i = 1; i < size-1; i++) {
-	if (sequence[i] == -1) { break; }
-	printf(",%d", sequence[i]);
+    if (sequence[0] == -1) {
+	if (extra > 0) {
+	    sprintf(tmp, "%d", extra);
+	    strcat(out, tmp);
+	} else {
+	    strcat(out, "(null sequence)");
+	}
     }
-    if (extra > 0) {
-	printf(",%d", extra);
+    else {
+	/* don't print a trailing comma at the end */
+	sprintf(tmp, "%d", sequence[0]);
+	strcat(out, tmp);
+	for(i = 1; i < size; i++) {
+	    if (sequence[i] == -1) { break; }
+	    sprintf(tmp, ",%d", sequence[i]);
+	    strcat(out, tmp);
+	}
+	if (extra > 0) {
+	    sprintf(tmp, ",%d", extra);
+	    strcat(out, tmp);
+	}
     }
-    printf("\n");
+    fprintf(stream, "%s\n", out);
+}
+
+/* dump the values of a lexpermute run structure */
+void print_lexargs(char *intro, LEXPERMUTE_ARGS *a)
+{
+    char out[400];
+    char tmp[160];
+    register short i;
+
+    strcpy(out, intro);
+
+    sprintf(tmp, "steps %2d, puzzle 0x%8lX, setsize %2d\n\tsolution:  ",
+		 a->steps, a->puzzle, a->setsize);
+    strcat(out, tmp);
+
+    if (a->solution[0] == -1) {
+	strcat(out, "(no solution path yet)");
+    }
+    else {
+	sprintf(tmp, "\t%d", a->solution[0]);
+	strcat(out, tmp);
+	for(i=1; i<SIZE; i++) {
+	    if (a->solution[i] == -1) { break; }
+	    sprintf(tmp, ",%d", a->solution[i]);
+	    strcat(out, tmp);
+	}
+    }
+    sprintf(tmp, "\n\tmoves set: %d", a->set[0]);
+    strcat(out, tmp);
+    for(i=1; i < a->setsize; i++) {
+	sprintf(tmp, ",%d", a->set[i]);
+	strcat(out, tmp);
+    }
+    fprintf(stderr, "%s\n", out);
 }
