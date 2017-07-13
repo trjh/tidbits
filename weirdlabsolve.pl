@@ -436,9 +436,6 @@ verified for revision 1.6
 #       67 mil checks/sec; 225.26s user   0.09s system 99% cpu  3:45.46 total
 # v1.6.2; count iterations with register variable while in lexpermute()
 #	64 mil checks/sec; 236.10s user   0.20s system 99% cpu  3:56.51 total
-# v1.7: 39 mil checks/sec; 
-#	what the hell? it's got near 100% cpu usage but...
-#	-j 1 69 mil checks/sec; -j 2 65 mil checks/sec
 revision 1.6.2
 - hide away lexpermute timings with a #define, as it greatly slows things down
 - experiment with using a register value to track iterations.  it doesn not
@@ -496,6 +493,28 @@ revision 1.6.2
     ./weirdlabsolve -d -d -n 4 2>stderr.out | sort > /tmp/out1.7_lvl4_sort.txt
     # done, finally works!
 
+# v1.7: 39 mil checks/sec; 
+#	what the hell? it's got near 100% cpu usage but...
+#
+#		in million checks/second:
+#			 -j1	 -j2	 -j3	 -j4	 -j5	 -j6	 -j7
+#	timmpb (4cpu):	69.1*	64.8	52.0	38.6	35.8	36.8	35.1	
+#	timvm (1cpu):	71.6	72.7	68.4	67.6	68.2	71.6	72.1*
+#	timcent (2cpu):	37.4	37.4	37.4	37.7*	37.7	37.7	37.7
+#
+#	for j in 1 2 3 4 5 6 7; do echo start j$j;
+#	(repeat 3 ./weirdlabsolve -j $j -n 8) | egrep "steps:|Total time"; done
+#	Linux: mpstat
+#	OS-X:  sysctl -n hw.ncpu
+#
+# now a running table of million checks/second for each revision...
+#
+#			perl	1.1   1.2   1.3   1.4   1.5   1.6   1.7
+# timmbp (4cpu):	0.014	4.9                    91.5        69.1
+# timvm (1cpu):		0.016	4.3   4.3   6.1 *92.x  86.8  25.6  
+
+- OK, so now 'unwind' the procedure calls so that lexpermute_last6 does
+  permutations with 6 steps without any subroutine calls
 
 - New code takes startpoint argument, with value between 0 and N!
   ...ok no i cannot find an easy O(1) formula for this, though I saw one in one
