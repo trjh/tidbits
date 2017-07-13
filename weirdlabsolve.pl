@@ -367,6 +367,7 @@ further steps:
 #
 # revision 1.4
 # checkpoint on timvm: 92 mil checks/sec [15x improvement over 6.06mil]
+#
 
     - use clock() for more precise timings, clean up timing a bit
     - make printing of sequences into a subroutine
@@ -493,6 +494,7 @@ revision 1.6.2
     ./weirdlabsolve -d -d -n 4 2>stderr.out | sort > /tmp/out1.7_lvl4_sort.txt
     # done, finally works!
 
+#
 # v1.7: 39 mil checks/sec; 
 #	what the hell? it's got near 100% cpu usage but...
 #
@@ -515,6 +517,68 @@ revision 1.6.2
 
 - OK, so now 'unwind' the procedure calls so that lexpermute_last6 does
   permutations with 6 steps without any subroutine calls
+
+check processing & steps:
+    time ./weirdlabsolve-Darwin1.5 -d -d -d -n 8 | \
+    head -5000000 > ~/Downloads/weirdout-1.5-n8_500000.txt
+
+    time ./weirdlabsolve -d -d -d -n 8 -S 1 -j 1 | \
+    head -5000000 > ~/Downloads/weirdout-1.8-n8_500000.txt
+
+    diff -uwb weirdout-1.*n8* | cdiff
+
+right that checks out, what about complete coverage of steps when running in
+parallel?
+
+    time ./weirdlabsolve-Darwin1.5 -d -d -n 8 2>&1 | head -5000000 | \
+    sort > ~/Downloads/weirdout-1.5-steps.txt
+
+    time ./weirdlabsolve -d -d -n 8 -j 2 2>&1 | head -5000000 | \
+    sort > ~/Downloads/weirdout-1.8-steps.txt
+
+    diff weirdout-1.*steps* | cut -d, -f 1-3 | sort | uniq -c
+
+that shows that v1.5 has 2487135 extra lines (about 50%) that continue on
+solutions starting with move 0; but 1.8 has 2487133 extra lines that work on
+solutions starting with move 1; this is probably good enough.
+
+Let's look at the timing again, because I think we're better now.
+
+#
+# revision 1.8
+#
+#		in million checks/second:
+#		 -j1	 -j2	 -j3	 -j4	 -j5	 -j6	 -j7	-j8
+#timmpb (4cpu):	110.3*	104.7	 83.1	 63.6	 62.5	 64.6	 62.4	62.8
+#timmbp-n9	103.2	102.5	 81.2	 64.2	 59.2	 62.1	 60.8	63.4
+#timvm (1cpu):	 88.1	 89.2	 87.5 	 87.4	 90.9*	 85.6	 91.5*	89.4
+#timcent (2cpu): 72.4	 72.1	 72.4	 72.4	 72.4	 72.4	 72.3	72.3
+#gir (8cpu):	146.8*	145.6	141.2	125.0	119.0	109.8	100.9	96.6
+#gir-n9		141.8	137.4	139.4	125.9	114.5	107.9	101.6	96.3
+#
+#...average time now 104.4 mil iterations/sec
+#
+for j in 1 2 3 4 5 6 7 8 9; do echo start j$j;
+(repeat 3 ./weirdlabsolve -j $j -n 8) | egrep "steps:|Total time"; done
+#
+# comments for revision 1.9
+- added lexpermute_seven subroutine that 'unrolls' the recursion from seven
+  steps down to one step, to improve speeds.  also added appropriate calling
+  of it.
+- incrase THREADLEVEL to 8, which means threading steps 7-1 takes 4 sec.
+  Should probably change this to 9 or 10.
+- create flipout(), which acts like flip() only doesn't flip the puzzle
+  in-place, but instead returns the resulting puzzle value
+- improve accuraccy of stopping if stop-after-N-iterations argument is used
+- slight tweaks to the debugtiming code, it now works with threading. also
+  fixed a math issue in reporting the results.
+
+...now getting fastest results to date, but still no real improvement with
+multiple threads.  next try making flipout() inline code via macro
+
+#
+# start: revision 1.8.1
+#
 
 - New code takes startpoint argument, with value between 0 and N!
   ...ok no i cannot find an easy O(1) formula for this, though I saw one in one
