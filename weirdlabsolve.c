@@ -15,7 +15,7 @@
 #ifndef lint
 static char *RCSid = "$Header: /Users/tim/proj/src/weirdlab/RCS/weirdsolve.c,v 1.5 2017/07/01 22:39:45 tim Exp tim $";
 #endif
-static char *Version = "1.8.2_NOFLIPMACRO";
+static char *Version = "1.9";
 
 #include <unistd.h>
 #include <stdlib.h>
@@ -59,6 +59,9 @@ static long pos2bit[SIZE] =	{0x0001, 0x0002, 0x0004, 0x0008, 0x0010,
 				 0x0020, 0x0040, 0x0080, 0x0100, 0x0200,
 				 0x0400, 0x0800, 0x1000, 0x2000, 0x4000,
 				 0x8000, 0x10000, 0x20000, 0x40000, 0x80000};
+
+/* flips mapped to bit placements -- dynamically generated for now */
+long pos2flip[SIZE];
 
 /* a successfully solved puzzle */
 #define PUZZLECOMPLETE 0x000FFFFF
@@ -144,7 +147,7 @@ PERMTIMES lextiming[SIZE];	/* make this a global for up to SIZE steps */
 void printpuzzle(long *puzzle);
 void generate(int n, int *sequence, long *puzzle);
 void flip(long *puzzle, int position);
-long flipout(long puzzle, int position);
+long flipout_function(long puzzle, int position);
 void testmode(long *puzzle);
 void lexrun(LEXPERMUTE_ARGS *la);
 void *lexpermute(void *argstruct);
@@ -152,6 +155,11 @@ void *lexpermute_seven(void *argstruct);
 void printseq(FILE *stream, char *, int sequence[], int size, int extra);
 void timecheck();
 void print_lexargs(char *intro, LEXPERMUTE_ARGS *a);
+void init_pos2flip();
+
+/* with the implementation of pos2flip, flipout can be a macro
+   ...we kept the function version for now, renamed with a _function */
+#define flipout(puzzle, position) ( puzzle ^ pos2flip[position] )
 
 /* macro version of flip -- works on a long directly, not the pointer */
 #define flipm(puzzle, pos) { \
@@ -161,6 +169,10 @@ void print_lexargs(char *intro, LEXPERMUTE_ARGS *a);
     if ((pos / WIDTH) < HEIGHTLESS1) { puzzle= puzzle ^ pos2bit[pos+WIDTH];} \
     if ((pos / WIDTH) > 0)	     { puzzle= puzzle ^ pos2bit[pos-WIDTH];} \
     }
+
+/* the XORs in flip can be combined into a fast lookup table.  we could hard
+ * code it but we'll just generate it using flip() for clarity */
+
     
 /* int errno; */
 
@@ -176,7 +188,8 @@ int main(int argc, char *argv[])
 	int steps = SIZE;
 	tid_main = pthread_self();
 
-	/* initialize puzzle and timers */
+	/* initialize flip map, puzzle, and timers */
+	init_pos2flip();
 	resetpuzzle(&puzzle);
 	start=lasttimecheck=clock();
 
@@ -819,7 +832,6 @@ void testmode(long *puzzle)
 	    flipm(*puzzle, testseq[i][j]);
 	    #else
 	    long temppuzzle = flipout(*puzzle, testseq[i][j]);
-	    printpuzzle(&temppuzzle);
 	    *puzzle = temppuzzle;
 	    #endif
 
@@ -863,6 +875,21 @@ void timecheck()
     if ((StopAfter) && (permutecount >= StopAfter)) {
 	printf("Stopping after %ld iterations\n", permutecount);
 	exit(0);
+    }
+}
+
+/* initialize the global pos2flip array.  we could do this more directly, but
+ * this shows the logic and doesn't take that much time in the grand scheme of
+ * things */
+void init_pos2flip()
+{
+    register int i;
+
+    for (i=0; i < SIZE; i++) {
+	/* the flip mask is equivalent to the flip of an empty puzzle at the
+	 * given position */
+	pos2flip[i] = 0;
+	flip(&pos2flip[i], i);
     }
 }
 
@@ -934,7 +961,7 @@ void flip(long *puzzle, int position)
 /* this version of flip does not modify puzzle, but returns the flipped puzzle
  */
 
-long flipout(long puzzle, int position)
+long flipout_function(long puzzle, int position)
 {
     /* flip position itself */
     puzzle = puzzle ^ pos2bit[position];

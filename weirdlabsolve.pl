@@ -636,14 +636,40 @@ Version 1.8.2
 #   END: Version 1.8.2
 # START: Version 1.9
 # 
-Right, I don't know why the macro didn't work, but it made me realize that
+Right, I dont know why the macro didnt work, but it made me realize that
 flip() is too complicated.  Each position being flipped represents an XOR of
 3-5 bit positions, or just the XOR of the current puzzle value by a
 flip-position-X value.  Now implement a flip lookup table, and make flip a
 macro that XORs "puzzle" with flipmap[position].
 
+Automate the code testing in the shell script -- done, and the steps output
+shows 0.01% difference.  Looks good.
+
+This improves the speed about 40%... but still no speed improvement from
+parallelization?!
+
+    tim-timmbp(weirdlab)% time ./weirdlabsolve -n 8 -j 1
+    Total time for sequence of length 8: 34.3 sec, rate 147.9 million/sec
+
+    tim-timmbp(weirdlab)% time ( ./weirdlabsolve -n 8 -j 1 &
+			         ./weirdlabsolve -n 8 -j 1 & )
+    Total time for sequence of length 8: 36.5 sec, rate 139.2 million/sec
+    Total time for sequence of length 8: 36.5 sec, rate 139.2 million/sec
+    ...so effectively 139.2*2 == 278.4 mil/sec
+    # try 3       ...effectively 346.8 mil/sec
+    # try 4       ...effectively 366.1 mil/sec
+    # try 5       ...effectively 457.6 mil/sec
+
+Looks like I should just be using fork.
+
+Version 1.9.1
+
+- make flipout into a macro that uses a static mapping table pos2flip, which
+  is initialized with init_pos2flip().  improves speed about 40%
+
 #
 #   END: Version 1.9
+Version 1.9.1 -- make mask in lexpermute_seven into a bit sequence
 # START: Version 1.10
 # 
 - New code takes startpoint argument, with value between 0 and N!
