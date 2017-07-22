@@ -669,7 +669,11 @@ Version 1.9
 
 #
 #   END: Version 1.9
+# START: Version 1.9.1
+#
 Version 1.9.1 -- make mask in lexpermute_seven into a bit sequence
+#
+#   END: Version 1.9.1
 # START: Version 1.10
 # 
 - New code takes startpoint argument, with value between 0 and N!
@@ -714,7 +718,7 @@ Version 1.9.1 -- make mask in lexpermute_seven into a bit sequence
      2 a c b [index 0 1 0]	10 b d a [index 1 2 0]	18 d a b	3 0 0 
      3 a c d [index 0 1 1]	11 b d c [index 1 2 1]  19 d a c        3 0 1
      4 a d b [index 0 2 0]	12 c a b [index 2 0 0]  20 d b a	3 1 0
-     5 a d d [index 0 2 1]	13 c a d	2 0 1	21 d b c	3 1 1
+     5 a d c [index 0 2 1]	13 c a d	2 0 1	21 d b c	3 1 1
      6 b a c [index 1 0 0]	14 c b a	2 1 0	22 d c a	3 2 0
      7 b a d [index 1 0 1]	15 c b d	2 1 1   23 d c b	3 2 1		index: [iteration / 6, (iteration % 6)/2, (iteration % 6)%2]
     
@@ -732,8 +736,136 @@ Version 1.9.1 -- make mask in lexpermute_seven into a bit sequence
   when iterating over elements of (remaining moves array), we use
     for (i=STARTSTEP[stepsleft] ...)
   ..and when finished, we set STARTSTEP[stepsleft]=0;
-    
+
+###
+- right, we have implemented BeginIteration and EndIteration -- where to start
+  and stop within the entire permutation space, as set on the command line.
+  Uses new Factor[] & BeginStep[] globals, makes Steps a global, 
+- in the process, realized that a long (4 bytes min) will not hold 20!
+  (steps = 20) -- that would take 61 bits, or 8 bytes.  Fortunately a
+  "long long" is 64bits in the C99 standard.  Changed all relevant values from
+  long to long long.
+- Begin/EndIteration require implementing functions to convert between
+  permutation number, index into permutation steps, and sequence of moves
+  represented.
+- change GuessRate & GuessRateHours to real variables settable on the command
+  line.  Fixed time estimates.
+- argument handling now uses getlongopt to handle --begin and --end arguments.
+  re-arranged the listed order of opt handlers to be alphabetical instead of
+  kinda random.
+- -j 0 will now turn off threading altogether.  Made me realize checkpointing
+  and stopping was only in the threaded bit.
+- re-arranged globals and definitions a bit.  this file is really too long for
+  'production' code.  but this is still hobby code.
+- make --split argument to show good places to split the factoring of large
+  values of Steps to distribute among multiple hosts
+- so much debug cruft in here, the factoring took a lot of getting right.
+  i will clean it out in the next minor rev
+
+...in the meantime, keep going with solve12 [use --split now instead of
+   calculating these things by 10]
+
+./weirdlabsolve -n 12 -d -d --begin 16314000000000 -S 100 | head -60
+...
+    remainder               6,       stepsleft  1, BeginStep[ 1] = 6  l
+    finishing sequence: 5,8,15,6,13,10,11,12,2,14,9,16
+	                a b  c d  e  f  g  h i  j k  l
+    ...that is not where it is supposed to start!
+    ...or is it:
+	    0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+	        i     a d   b    e  f  g  k  h  c  l  j
+	    5, 8, 15, 6, 10, 11, 12, 14, 2, 17, 13, 16
+	    a  b  c   d   e  f   g   h   i  j   k
+
+Notes from when I tried to use BeginSet[] all the way down to 1 in
+lexpermute_seven:
+
+  /* right, this doesn't cut it -- we have to account for any elements
+   * 'missing' from the set before index.  e.g.
+   * starting set:
+   *  set: 0, 1, 2, 3, 4, 7, 9,11,12,13,14,16,17,18,19
+   * level 7 uses element 7
+   * mask: 0  0  0  0  0  0  0  1  0  0  0  0  0  0  0
+   *  set: 0, 1, 2, 3, 4, 7, 9,   12,13,14,16,17,18,19
+   * level 6 uses element 7
+   * mask: 0  0  0  0  0  0  0  1  1  0  0  0  0  0  0
+   *  set: 0, 1, 2, 3, 4, 7, 9,      13,14,16,17,18,19
+   * level 5 uses element 8... we can't just go to element 7 and skip
+   * those not already in use [result=13], we have to count in 9
+   * elements (starting from 0) [result=14]
+   *
+   * if we look at the 'hamming weight' (number of bits set) under the
+   * result we want, we can calculate an offset.  this might be an
+   * iterative process tho.
+   * there should be a clever binary way to do this but i don't know
+   * it
+   */
+
+calculating 'h' -- index=8, so first look at bits set under 0-8
+	    0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+	              a d   b    e  f  g               
+the hamming weight in 0- 8 is 3, so hoffset=3, try again with 0-11
+the hamming weight in 0-11 is 5, so hoffset=5, try again with 0-13
+the hamming weight in 0-13 is 6, so hoffset=6, try again with 0-14
+the hamming weight in 0-14 is still 6, we have a winner!
+
+    Right... but we ONLY need this if we are trying to get to that exact
+    starting sequence.  Which is not strictly necessary as computing all the
+    combinations under n=6 is very fast.  Leave out the complex code for
+    hamming weights and just stop setting beginning index at BeginStep[7].
+
+    ...
+    finishing sequence: 5,8,15,6,10,19,18,17,16,14,13,12
+    ? isn\'t this going back
+    16131060 iterations in 68.1 sec [16131060 total, 0.24 mil checks/sec]
+    Stopping after 16131060 iterations, at iteration # 16314016131060
+
+                                      L  C B  A 9  8  7  6  5 4  3  2  1
+                       permute sequence: 5,8,15,6,10,11,12,14,2,17,13,16
+finishing sequence      429412240857600: 5,8,15,6,10,11,12,13,2,14,9,16
+                                  index: 0,0,0,0,0,0,0,0,0,5,5,6,2
 
 
+timvm(weirdlab)> ./weirdlabsolve -n 12 --begin 16314000000000 -S 100
+Stopping after 16216200 iterations, at iteration # 16314016216200
+#
+#   END: Version 1.10
+# START: Version 1.10.1
+# 
+
+THEN
+remove CHECK THIS CODE bit
+remove ^printf
+create lexpermute_ten or eleven
+implement interrupt handler
+convert all ints to unsigned as no need for sign?
 https://stackoverflow.com/questions/5248915/execution-time-of-c-program
 
+weirdlabsolve -n 12 -j 0 --begin 16314000000000 -S 4804942222080 > Results/n12.top5
+# timcent Fri Jul 21 14:17:12 IST 2017
+weirdlabsolve -n 12 -j 0 --begin 21118941043200 -S 3016991577600 > Results/n12.top7
+    # timcent Fri Jul 21 14:17 - 23:14
+weirdlabsolve -n 12 -j 0 --begin 24135932620800 -S 3016991577600 > Results/n12.top8
+    # gir Fri Jul 21 14:23:33 IST 2017 -~ 22:53
+weirdlabsolve -n 12 -j 0 --begin 27152924198400 -S 3016991577600 > Results/n12.top9
+    # gir Fri Jul 21 14:24:06 IST 2017 -~ 22:53
+weirdlabsolve -n 12 -j 0 --begin 30169915776000 -S 3016991577600 > Results/n12.top10
+    # timvm Fri Jul 21 14:25 - 22:50
+weirdlabsolve -n 12 -j 0 --begin 33186907353600 -S 3016991577600 > Results/n12.top11
+# timmbp Fri Jul 21 14:34
+weirdlabsolve -n 12 -j 0 --begin 36203898931200 -S 3016991577600 > Results/n12.top12
+# timmbp Fri Jul 21 14:34
+weirdlabsolve -n 12 -j 0 --begin 39220890508800 -S 3016991577600 > Results/n12.top13
+# scripts Fri Jul 21 14:50
+weirdlabsolve -n 12 -j 0 --begin 42237882086400 -S 3016991577600 > Results/n12.top14
+# scripts Fri Jul 21 14:50
+weirdlabsolve -n 12 -j 0 --begin 45254873664000 -S 3016991577600 > Results/n12.top15
+# gir Fri July 21 23:11
+weirdlabsolve -n 12 -j 0 --begin 48271865241600 -S 3016991577600 > Results/n12.top16
+# gir Fri July 21 23:11
+weirdlabsolve -n 12 -j 0 --begin 51288856819200 -S 3016991577600 > Results/n12.top17
+# timvm Fri July 21 23:07
+weirdlabsolve -n 12 -j 0 --begin 54305848396800 -S 3016991577600 > Results/n12.top18
+# timcent Fri July 21 23:16
+weirdlabsolve -n 12 -j 0 --begin 57322839974400 -S 3016991577600 > Results/n12.top19
+    # runsize is 7.0 hours
