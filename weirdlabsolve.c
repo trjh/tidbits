@@ -87,29 +87,28 @@ long pos2flip[SIZE];
 long long permutecount = 0;
 				 /* how many sequences have we processed? */
 
-/* now make this our standard estimate x 6 x 60 == 6 minutes */
-/* #define CHECKINTERVAL 1000000000 * how often to do a speed check */
-#define CHECKINTERVAL   42984000000 /* how often to do a speed check */
-/* #define CHECKINTERVAL   4298400000 * why is the above not 6 min? how often to do a speed check */
+/* how often to do a speed check: now make this
+   our standard estimate x 6 x 60 == 6 minutes
+*/
+#define CHECKINTERVAL   42984000000
 
-long long LastCountCheck = 0;	 /* the last permcount value when we did a
+long long LastCountCheck = 0;	/* the last permcount value when we did a
 				    timecheck on permutations/sec */
 long long NextCountCheck=CHECKINTERVAL;
-				 /* goal for next permcount value when we do
+				/* goal for next permcount value when we do
 				      a timecheck */
 int CheckLevel = 8;		/* Level to checkpoint at, really only used if
 				   Threading is disabled */
 
 long long BeginIteration = 0;	/* iteration to start at */
-long long EndIteration = 0;		/* iteration to end at,
+long long EndIteration = 0;	/* iteration to end at,
 				   if we're not doing full range */
 int BeginStep[SIZE+1] = {0};	/* each step will start at BeginStep[step],
 				   non-zero if BeginIteration is non-zero.
 				   See init_begin() for more details */
 
 /* value to determine where to thread, and which threads are complete */
-int ThreadLevel = 8;		/* do threading if steps == THREADLEVEL */
-/* #define THREADS 4	*/	/* define # of threads here for now */
+int ThreadLevel = 8;		/* do threading if steps == ThreadLevel */
 int Threads = 4;	
 pthread_t tid_main;		/* thread id of main */
 #define NOTHREADS 1000		/* if ThreadLevel == NOTHREADS, we are not
@@ -669,7 +668,7 @@ void *lexpermute(void *argstruct)
 		sequence2index(ts, Steps, ti);
 		index2permute(ti, Steps, tn);
 		char temp[80];
-		sprintf(temp, "CHECK THIS CODE VS LP_7 finishing sequence %20lld: ", tn);
+		sprintf(temp, "finishing sequence %20lld: ", tn);
 		printseq(stdout, temp, ts, SIZE, -1);
 		if (debug > 2) {
 		    printpuzzle(&mypuzzle);
@@ -721,10 +720,6 @@ void *lexpermute(void *argstruct)
     #endif
 
     /* if we're here, we have more than one step left to process */
-if (BeginStep[a->steps]) {
-printf("Stepsleft %2d,       BeginIndex %2d - %2d (%2d - %2d)\n",
-	a->steps, BeginStep[a->steps], (a->setsize)-1,
-	a->set[BeginStep[a->steps]], a->set[(a->setsize)-1]); }
     for (set_i=BeginStep[a->steps]; set_i<a->setsize; set_i++) {
 	/* at the top level, announce the start of each main branch */
 	if (a->solution[0] == -1) {
@@ -871,7 +866,7 @@ printf("Stepsleft %2d,       BeginIndex %2d - %2d (%2d - %2d)\n",
 	    #endif
 
 	    *iterations += *subiterations;
-	    free(subiterations);	/* don't need memory allocated in that call */
+	    free(subiterations); /* release mem allocated by lexpermute() */
 	}
 	
 	/* status check time? */
@@ -978,12 +973,6 @@ void *lexpermute_seven(void *argstruct)
 	now in seven loops, cycle through all the permutations of the
 	steps/set passed to us
     */
-if (BeginStep[7]) {
-printf("Stepsleft %2d fixed, BeginIndex %2d - %2d (%2d - %2d)\n",
-	7, BeginStep[7], (a->setsize)-1,
-	a->set[BeginStep[7]], a->set[(a->setsize)-1]);
-printf("BeginIteration     %20lld\n", BeginIteration);
-}
     for (index[7] = BeginStep[7]; index[7] < a->setsize; index[7]++) {
       /* mark our place in the map -- at this level we don't need to worry
        * about stepping on any other level */
@@ -1051,17 +1040,7 @@ printf("BeginIteration     %20lld\n", BeginIteration);
 			printpuzzle(&mypuzzle[1]);
 		    }
 		    else if (debug > 1) {
-			/*
-			int s[7];
-			for (j=7; j>0; j--) {
-			    s[7-j] = a->set[index[j]];
-			}
-			sprintf(stemp, "finishing %s", solnstart);
-			printseq(stdout, stemp, s, 7, -1);
-			*/
-			int ts[SIZE];
-			int ii;
-			int ti[Steps+1];
+			int ts[SIZE], ii, ti[Steps+1];
 			long long tn = 0;
 			for(j=0; j < SIZE; j++) {
 			    if (a->solution[j] == -1) {
@@ -1078,9 +1057,6 @@ printf("BeginIteration     %20lld\n", BeginIteration);
 			char temp[80];
 			sprintf(temp, "finishing sequence %20lld: ", tn);
 			printseq(stdout, temp, ts, SIZE, -1);
-			/*
-			printseq(stdout, "                                  index: ", ti, 13, -1);
-			*/
 	
 			if (debug > 2) {
 			    printpuzzle(&mypuzzle[1]);

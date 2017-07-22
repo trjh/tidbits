@@ -834,12 +834,21 @@ Stopping after 16216200 iterations, at iteration # 16314016216200
 # 
 
 THEN
-remove CHECK THIS CODE bit
 remove ^printf
 create lexpermute_ten or eleven
+splits do a -1 on size, use level down
 implement interrupt handler
 convert all ints to unsigned as no need for sign?
 https://stackoverflow.com/questions/5248915/execution-time-of-c-program
+--
+n12.top19
+teps: 12, solution space: 60339831.55 mil, estimate: 5.8 days
+[wrong solution space size]
+Total time for sequence of length 12: 27405.8 sec, rate 110.1 million/sec
+WARNING! iterations 3016991577600 not equal to
+         solspace   603398315520000
+--
+
 
 weirdlabsolve -n 12 -j 0 --begin 16314000000000 -S 4804942222080 > Results/n12.top5
 # timcent Fri Jul 21 14:17:12 IST 2017
