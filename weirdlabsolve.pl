@@ -832,49 +832,31 @@ Stopping after 16216200 iterations, at iteration # 16314016216200
 #   END: Version 1.10
 # START: Version 1.10.1
 # 
+remove extra debug code from last round, tidy up some comments
+#
+#   END: Version 1.10.1
+# START: Version 1.10.2
+# 
+Version 1.10.2
 
+- tidied output in general, added info useful for checking across batch files
+  to see that all chunks were run and which host ran which chunk -- and if any
+  chunks were successful!
+- status updates now include where we are (at least more clearly)
+- better calculation of results if only a chunk is processed in one execution
+- cleaned up a bit of debug output missed in the last pass
+- implement signal handlers to print an update or stop cleanly
+- removed notes in .pl from running steps=12
+#
+#   END: Version 1.10.2
+# START: Version 1.10.3
+# 
 THEN
-remove ^printf
 create lexpermute_ten or eleven
-splits do a -1 on size, use level down
-implement interrupt handler
+#
+#   END: Version 1.10.3
+# START: Version 1.10.4
+# 
+review ALL output
 convert all ints to unsigned as no need for sign?
 https://stackoverflow.com/questions/5248915/execution-time-of-c-program
---
-n12.top19
-teps: 12, solution space: 60339831.55 mil, estimate: 5.8 days
-[wrong solution space size]
-Total time for sequence of length 12: 27405.8 sec, rate 110.1 million/sec
-WARNING! iterations 3016991577600 not equal to
-         solspace   603398315520000
---
-
-
-weirdlabsolve -n 12 -j 0 --begin 16314000000000 -S 4804942222080 > Results/n12.top5
-# timcent Fri Jul 21 14:17:12 IST 2017
-weirdlabsolve -n 12 -j 0 --begin 21118941043200 -S 3016991577600 > Results/n12.top7
-    # timcent Fri Jul 21 14:17 - 23:14
-weirdlabsolve -n 12 -j 0 --begin 24135932620800 -S 3016991577600 > Results/n12.top8
-    # gir Fri Jul 21 14:23:33 IST 2017 -~ 22:53
-weirdlabsolve -n 12 -j 0 --begin 27152924198400 -S 3016991577600 > Results/n12.top9
-    # gir Fri Jul 21 14:24:06 IST 2017 -~ 22:53
-weirdlabsolve -n 12 -j 0 --begin 30169915776000 -S 3016991577600 > Results/n12.top10
-    # timvm Fri Jul 21 14:25 - 22:50
-weirdlabsolve -n 12 -j 0 --begin 33186907353600 -S 3016991577600 > Results/n12.top11
-# timmbp Fri Jul 21 14:34
-weirdlabsolve -n 12 -j 0 --begin 36203898931200 -S 3016991577600 > Results/n12.top12
-# timmbp Fri Jul 21 14:34
-weirdlabsolve -n 12 -j 0 --begin 39220890508800 -S 3016991577600 > Results/n12.top13
-# scripts Fri Jul 21 14:50
-weirdlabsolve -n 12 -j 0 --begin 42237882086400 -S 3016991577600 > Results/n12.top14
-# scripts Fri Jul 21 14:50
-weirdlabsolve -n 12 -j 0 --begin 45254873664000 -S 3016991577600 > Results/n12.top15
-# gir Fri July 21 23:11
-weirdlabsolve -n 12 -j 0 --begin 48271865241600 -S 3016991577600 > Results/n12.top16
-# gir Fri July 21 23:11
-weirdlabsolve -n 12 -j 0 --begin 51288856819200 -S 3016991577600 > Results/n12.top17
-# timvm Fri July 21 23:07
-weirdlabsolve -n 12 -j 0 --begin 54305848396800 -S 3016991577600 > Results/n12.top18
-# timcent Fri July 21 23:16
-weirdlabsolve -n 12 -j 0 --begin 57322839974400 -S 3016991577600 > Results/n12.top19
-    # runsize is 7.0 hours

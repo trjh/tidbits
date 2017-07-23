@@ -26,6 +26,7 @@ static char *Version = "1.9.2";
 #include <string.h>
 #include <pthread.h>
 #include "binary.h"
+#include <signal.h>
 
 /*
  * definitions
@@ -136,6 +137,7 @@ float	GuessRate = 119.4*1000000; /* second slowest average
 				   as measured amongst my hosts.
 				   Can be changed on command line. */
     
+int Results = 0;		/* We don't expect this to be set much */
 /* structure for executing a run -- needed for threading */
 /* now store the solution & set arrays directly in the structure, to make
  * things a little cleaner, code-wise
@@ -190,12 +192,15 @@ void lexrun(LEXPERMUTE_ARGS *la);
 void *lexpermute(void *argstruct);
 void *lexpermute_seven(void *argstruct);
 void printseq(FILE *stream, char *, int sequence[], int size, int extra);
-void timecheck();
+void revprintseq(FILE *stream, char *, int sequence[], int size, int extra);
+void timecheck(int *solution, int laststep);
 void print_lexargs(char *intro, LEXPERMUTE_ARGS *a);
 void init_pos2flip();
 void init_factor(int steps);
 void show_split();
 char *sec2string(long long seconds);
+void signal_stop(int signal);
+void signal_info(int signal);
 
 /* with the implementation of pos2flip, flipout can be a macro
    ...we kept the function version for now, renamed with a _function */
@@ -247,15 +252,16 @@ char *sec2string(long long seconds);
     int pi_counter; \
     for (pi_counter=0; pi_counter < (steps-1); pi_counter++) { \
 	int stepsleft = steps-pi_counter; \
-	printf("remainder %15ld, i %2d, ", remainder, pi_counter); \
+	if (debug>1) { printf("remainder %15ld, i %2d, ", \
+			      remainder, pi_counter); } \
 	index[stepsleft] = remainder / Factor[stepsleft-1]; \
 	remainder        = remainder % Factor[stepsleft-1]; \
-	printf("stepsleft %2d, index[%2d] = %d\n", \
-		stepsleft, stepsleft, index[stepsleft]); \
+	if (debug>1) { printf("stepsleft %2d, index[%2d] = %d\n", \
+			      stepsleft, stepsleft, index[stepsleft]); } \
     } \
     index[1] = remainder; \
-    printf("remainder %15ld,       stepsleft %2d, index[%2d] = %d\n", \
-	    remainder, 1, 1, index[1]); \
+    if (debug>1) { printf("remainder %15ld,       stepsleft %2d, " \
+			  "index[%2d] = %d\n", remainder, 1, 1, index[1]); } \
 }
 
 /* assumes:
@@ -428,7 +434,14 @@ int main(int argc, char *argv[])
 	    }
 	}
 
-	printf("Version %s\n", Version);
+	{
+	    char h[80];
+	    gethostname(h, 80);
+	    char *dot = strchr(h, (int) '.');
+	    /* don't print anything after the dot in hostname*/
+	    if (dot) { *dot = '\0'; }
+	    printf("Version %s on host \"%s\"\n", Version, h);
+	}
 	if (debug>0) {
 	    printf("debug level: %d\n", debug);
 	}
@@ -437,6 +450,9 @@ int main(int argc, char *argv[])
 	if (BeginIteration>0) {
 	    permute2index(BeginIteration, Steps, BeginStep);
 	    if (debug > 1) {
+		/*
+		 * from initial debug of these routines
+		 */
 		printf(          "Permute        #: %lld\n", BeginIteration);
 		printseq(stdout, "permute    index: ", BeginStep, Steps+1, -1);
 		int BeginSeq[Steps];
@@ -449,20 +465,17 @@ int main(int argc, char *argv[])
 		sequence2index(BeginSeq, Steps, index);
 		printseq(stdout, "permIdx from seq: ", index, Steps+1, -1);
 	    }
-		int index[Steps+1];
-	    int ts[12] = { 5,8,15,6,10,19,18,17,16,14,13,12 };
-		printseq(stdout, "--\nend seq:          ", ts, Steps, -1);
-		sequence2index(ts, Steps, index);
-		printseq(stdout, "permIdx from seq: ", index, Steps+1, -1);
-		long long permnum = 0;
-		index2permute(index, Steps, permnum);
-		printf(          "Perm# from index: %lld\n", permnum);
 	}
 	/* if we're just showing splits, do that and exit */
 	if (ShowSplit == 1) {
 	    show_split(Steps);
 	    exit(0);
 	}
+
+	/* initialize signal handlers */
+	signal(SIGHUP,  signal_stop);
+	signal(SIGINT,  signal_stop);
+	signal(SIGINFO, signal_info);
 
 	/* figure out when we stop -- rationalize StopAfter and EndIteration.
 	 * We'll continue to use StopAfter as the stopping trigger
@@ -487,7 +500,7 @@ int main(int argc, char *argv[])
 	    StopAfter = EndIteration - BeginIteration;
 	}
 	/* now if StopAfter exists, set us up to stop in the right place */
-	if (NextCountCheck > StopAfter) {
+	if ((StopAfter) && (NextCountCheck > StopAfter)) {
 	    NextCountCheck = StopAfter;
 	}
 
@@ -520,7 +533,7 @@ int main(int argc, char *argv[])
 	 * if 'steps' was set on the command line, do the run with that many
 	 * steps
 	 */
-	if (Steps != SIZE) {
+	if (Steps != 0) {
 	    la.steps = Steps;
 	    lexrun(&la);
 	}
@@ -568,6 +581,8 @@ void lexrun(LEXPERMUTE_ARGS *la)
 {
     clock_t startsize, endsize;		/* timing variables */
     long long solspace = 1;		/* size of solution space */
+    long long runsize;			/* number of permutations we plan to
+					   do, less than or equal to solspace */
     unsigned long i;			/* counter */
     long long *iterations;		/* iterations processed by lexrun() */
 
@@ -576,15 +591,21 @@ void lexrun(LEXPERMUTE_ARGS *la)
 	solspace = solspace * (SIZE-i);
     }
 
-    /*
-    printf("steps: %d, solution space: %.2f [%ld] "SCALET", "
-	   "estimate: %s\n", la->steps, (double) solspace/SCALE,
-	   solspace,
-	   sec2string((long long)(solspace/GuessRate)));
-    */
-    printf("steps: %d, solution space: %.2f "SCALET", "
+    printf("steps: %2d, solution space: %15.1f "SCALET", "
 	   "estimate: %s\n", la->steps, (double) solspace/SCALE,
 	   sec2string((long long)(solspace/GuessRate)));
+    if (BeginIteration || StopAfter) {
+	if (StopAfter) {
+	    runsize = StopAfter;
+	} else {
+	    runsize = solspace - BeginIteration;
+	}
+	printf("constrained run size:      %15.1f "SCALET", "
+	   "estimate: %s\n\n", (double) runsize/SCALE,
+	   sec2string((long long)(runsize/GuessRate)));
+    } else {
+	puts("");
+    }
 
     startsize=clock();
     if (la->steps == 7) {
@@ -602,13 +623,21 @@ void lexrun(LEXPERMUTE_ARGS *la)
     double elapsed = (double)(endsize - startsize) / CLOCKS_PER_SEC;
 
     double rate = (double) *iterations / (elapsed * SCALE);
-    printf("Total time for sequence of length %d: "
+    printf("\nTotal time for sequence of length %d: "
 	  "%.1f sec, rate %.1f million/sec\n", la->steps, elapsed, rate);
+    printf("Completed permutations %20lld - %20lld, Results %2d\n",
+	BeginIteration, BeginIteration + *iterations, Results);
 
-    if (*iterations != solspace) {
+    if (BeginIteration || StopAfter) {
+	if (*iterations != runsize) {
+	    printf("WARNING! iterations %lld not equal to \n"
+		   "         runsize %lld - BeginIteration %lld\n",
+		   *iterations,solspace,BeginIteration);
+	}
+    }
+    else if (*iterations != solspace) {
 	printf("WARNING! iterations %lld not equal to \n"
 	       "         solspace   %lld\n",*iterations,solspace);
-	exit(-1);
     }
     
     free(iterations);	/* to balace the malloc() elsewhere */
@@ -678,6 +707,7 @@ void *lexpermute(void *argstruct)
 		printseq(stdout, "\nsuccess with sequence: ",
 			 a->solution, SIZE, a->set[set_i]);
 		printpuzzle(&mypuzzle);
+		Results++;
 	    }
 
 	    /*
@@ -871,7 +901,7 @@ void *lexpermute(void *argstruct)
 	
 	/* status check time? */
 	if (permutecount > NextCountCheck) {
-	    timecheck();
+	    timecheck(a->solution, a->set[set_i+1]);
 	    LastCountCheck = permutecount;
 	    NextCountCheck = permutecount + CHECKINTERVAL;
 	}
@@ -1038,6 +1068,7 @@ void *lexpermute_seven(void *argstruct)
 			sprintf(stemp, "success with %s", solnstart);
 			printseq(stdout, stemp, s, 7, -1);
 			printpuzzle(&mypuzzle[1]);
+			Results++;
 		    }
 		    else if (debug > 1) {
 			int ts[SIZE], ii, ti[Steps+1];
@@ -1145,21 +1176,35 @@ void testmode(long *puzzle)
     }
 
  */
-void timecheck()
+void timecheck(int *solution, int laststep)
 {
     clock_t t = clock();
     long count_since_last = permutecount - LastCountCheck;
+    char temp[120];
+
     double rate = ((double) permutecount /
 		   (SCALE * (double) (t-start) / CLOCKS_PER_SEC));
-    printf("%ld iterations in %0.1f sec "
+    printf("%ld iter, %0.1f sec "
 	   "[%lld total, %.2f "SCALET" checks/sec]\n",
 	   count_since_last,
 	   (double) (t-lasttimecheck) / CLOCKS_PER_SEC,
-	   BeginIteration + permutecount, rate);
+	   permutecount, rate);
+    sprintf(temp, "Permute# %lld, just completed all sol under: ",
+	   BeginIteration + permutecount);
+    printseq(stdout, temp, solution, Steps, laststep);
+
     lasttimecheck=t;
     if ((StopAfter) && (permutecount >= StopAfter)) {
-	printf("Stopping after %lld iterations, at iteration # %lld\n",
+	printf("\nStopping after %lld iterations, at iteration # %lld\n",
 		permutecount, BeginIteration + permutecount);
+
+	double elapsed = (double)(clock() - start) / CLOCKS_PER_SEC;
+	double rate = (double) permutecount / (elapsed * SCALE);
+	printf("Elapsed %.1f seconds, overall rate %.1f "SCALET"/sec\n",
+	       elapsed, rate);
+	printf("Completed permutations %20lld - %20lld, Results %2d\n",
+	    BeginIteration, BeginIteration + permutecount, Results);
+
 	exit(0);
     }
 }
@@ -1247,76 +1292,116 @@ void init_factor(int steps)
 void show_split()
 {
     /* number of seconds that defines an acceptable chunk -- add more if we
-     * haven't reached this limit */
+     * haven't reached this limit, and use step levels that are less than this
+     * limit */
 
     #define	ACCEPTABLE	7*3600
     int i;	/* counter */
-    /* print starting iteration for each of the top steps, and estimated
-     * duration to run
-     */
-    printf("steps: %d, solution space: %.2f "SCALET", estimate: %s\n",
+
+    /* describe overall problem space */
+
+    printf("steps: %d, solution space: %.2f "SCALET", estimate: %s\n\n",
 	   Steps,
 	   (double) Factor[Steps]/SCALE,
 	   sec2string((long long)(Factor[Steps]/GuessRate)));
+
+    /*
+     * print starting iteration for each of the top steps, and estimated
+     * duration to run
+     */
     printf("%15s %20s  Duration in Hours\n", "TopLvlElement", "Iteration #");
     for (i=0; i < SIZE; i++) {
 	printf("%15d %20lld  %.3f\n", moves[i], (long long) Factor[Steps-1]*i,
 	    (float) (Factor[Steps-1]) / (GuessRate*3600));
     }
-    puts("\n");
+    puts(""); /* includes a CR */
+
+    /*
+     * find the most appropriate step level to split at
+     */
+    int splitfactor = 0;
+    for (i=1; i<=Steps; i++) {
+	if ((Factor[i]/GuessRate) > ACCEPTABLE) {
+	    splitfactor = i-1;
+	    printf("Splitting runs at steps=%d (%s) -- "
+		   "(next level steps=%d is %s per run)\n"
+		   "Total runs/chunks: %lld\n",
+		   i-1, sec2string((long long)Factor[i-1]/GuessRate),
+		   i,   sec2string((long long)Factor[i]/GuessRate),
+		   Factor[Steps]/Factor[splitfactor]
+		   );
+	    break;
+	}
+    }
+
+    long long nextStart = 0;	/* permutation number of next --begin arg */
+    int thisChunk = 0;		/* of N chunks of size Factor[splitfactor],
+				   this is number "thisChunk" */
+    int thisIndex[Steps+1];
+    /* int thisSequence[Steps]; */
+
     /* handle the starting case */
-    int nextTop = 0;
     if (BeginIteration) {
-	/* find the beginning iteration that rounds off at level 7 */
-	int ti[SIZE+1];
-	memcpy(&ti[0], BeginStep, (SIZE+1)*sizeof(int));
-	for (i=6; i>=0; i--) { ti[i] = 0; }
-	long long real_begin_iteration;
-	index2permute(ti, Steps, real_begin_iteration);
+	/* We want to find the iteration that starts a call to
+	 * lexpermute_seven.  Instead of a more complex method, try the
+	 * nearest multiple of Factor[7].
+	 */
+	long long steps7_begin = Factor[7]*(BeginIteration/Factor[7]);
 
 	/* find next toplevel starting iteration */
-	int ti2[SIZE+1] = {0};
-	ti2[Steps] = BeginStep[Steps]+1;
-	long long next_iteration;
-	index2permute(ti2, Steps, next_iteration);
+	thisChunk = BeginIteration/Factor[splitfactor];
+	nextStart = Factor[splitfactor]*(1+thisChunk);
 
-	long long first_iteration_perms = next_iteration-real_begin_iteration;
-	while ((first_iteration_perms/GuessRate) < ACCEPTABLE) {
-	    ti2[Steps]++;
-	    index2permute(ti2, Steps, next_iteration);
-	    first_iteration_perms = next_iteration-real_begin_iteration;
+	long long first_iteration_perms = nextStart-steps7_begin;
+
+	/* only add one more chunk to this first iteration if the runtime is
+	 * less than ACCEPTABLE -- we don't want the first run to be 7 hours
+	 * when the rest are 3 hours
+	 */
+	if ((first_iteration_perms/GuessRate) < ACCEPTABLE) {
+	    nextStart += Factor[splitfactor];
 	}
+
+	/* get sequence we start with */
+	permute2index(steps7_begin, Steps, thisIndex);
+	/* index2sequence(thisIndex, Steps, thisSequence); */
+	
 	printf("weirdlabsolve -n %d --begin %lld -S %lld > Results/n%d.top%d\n",
-	    Steps, BeginIteration, first_iteration_perms,
-	    Steps, ti[Steps]);
-	printf("# runsize is %.1f hours\n",
+	    Steps, steps7_begin, first_iteration_perms-1,
+	    Steps, thisChunk);
+	printf("# runsize is %.1f hours, ",
 	       (first_iteration_perms/(GuessRate*3600)));
-	nextTop = ti2[Steps];
+	revprintseq(stdout, "starting at index ", &thisIndex[1], Steps, -1);
     }
-    while (nextTop < SIZE) {
-	/* now we are dealing in clean chunks of size Factor[Steps-1] */
-	long long runsize = Factor[Steps-1];
-	int TopsToDo = 1;
-	while ((runsize/GuessRate) < ACCEPTABLE) {
-	    if (nextTop+TopsToDo+1 >= SIZE) {
-		/* end of the road anyway */
-		break;
-	    }
-	    TopsToDo++;
-	    runsize += Factor[Steps-1];
-	}
-	int ti[SIZE+1] = {0};
-	ti[Steps] = nextTop;
-	long long perm_start;
-	index2permute(ti, Steps, perm_start);
+    while (nextStart < Factor[Steps]) {
+	/* now we are dealing in clean chunks of size Factor[splitfactor] */
+	thisChunk++;
+	permute2index(nextStart, Steps, thisIndex);
+
 	printf("weirdlabsolve -n %d --begin %lld -S %lld > Results/n%d.top%d\n",
-	    Steps, perm_start, runsize,
-	    Steps, nextTop);
-	printf("# runsize is %.1f hours\n", (runsize/(GuessRate*3600)));
-	nextTop += TopsToDo;
+	    Steps, nextStart, Factor[splitfactor]-1,
+	    Steps, thisChunk);
+	printf("# runsize is %.1f hours, ",
+	    (Factor[splitfactor]/(GuessRate*3600)));
+	revprintseq(stdout, "starting at index ", &thisIndex[1], Steps, -1);
+
+	nextStart += Factor[splitfactor];
     }
 }
 	
+/* if we've received a sigint, tell the lexpermutes to stop ASAP */
+void signal_stop(int signal)
+{
+    printf("Caught signal %d, stopping ASAP\n", signal);
+    NextCountCheck = StopAfter = 1;
+}
+
+/* if we've received an information signal, tell lexpermutes to report in */
+void signal_info(int signal)
+{
+    printf("Caught signal %d, stats ASAP\n", signal);
+    NextCountCheck = 1;
+}
 
 /*
  * now in macro form as flipm() above, better to use that
@@ -1451,6 +1536,16 @@ void printseq(FILE *stream, char *intro, int sequence[], int size, int extra)
 	}
     }
     fprintf(stream, "%s\n", out);
+}
+
+/* print out a sequence in reverse -- as above*/
+void revprintseq(FILE *stream, char *intro, int sequence[], int size, int extra)
+{
+    int ts[size], i;
+    for (i=size-1; i >= 0; i--) {
+	ts[size-1-i] = sequence[i];
+    }
+    printseq(stream, intro, ts, size, extra);
 }
 
 /* dump the values of a lexpermute run structure */
