@@ -191,6 +191,7 @@ void testmode(long *puzzle);
 void lexrun(LEXPERMUTE_ARGS *la);
 void *lexpermute(void *argstruct);
 void *lexpermute_seven(void *argstruct);
+void *lexpermute_eleven(void *argstruct);
 void printseq(FILE *stream, char *, int sequence[], int size, int extra);
 void revprintseq(FILE *stream, char *, int sequence[], int size, int extra);
 void timecheck(int *solution, int laststep);
@@ -608,7 +609,9 @@ void lexrun(LEXPERMUTE_ARGS *la)
     }
 
     startsize=clock();
-    if (la->steps == 7) {
+    if (la->steps == 11) {
+	iterations = (long long *)lexpermute_eleven(la);
+    } else if (la->steps == 7) {
 	iterations = (long long *)lexpermute_seven(la);
     } else {
 	iterations = (long long *)lexpermute(la);
@@ -740,6 +743,20 @@ void *lexpermute(void *argstruct)
 					/* give each thread its own argument
 					 * structure */
 
+    /* as there are now three versions of lexpermute, just set the
+     * downstream one to use here */
+    void *(*lexfunction)(void *);
+    switch((a->steps)-1) {
+	case 11:
+	    lexfunction = lexpermute_eleven;
+	    break;
+	case 7:
+	    lexfunction = lexpermute_seven;
+	    break;
+	default:
+	    lexfunction = lexpermute;
+    }
+
     #ifdef DEBUGTIMING
     clock_t startsize[Threads];		/* timer for each thread */
     #endif
@@ -819,13 +836,6 @@ void *lexpermute(void *argstruct)
 	    print_lexargs(stemp, &downstream[mythreadi]);
 	    #endif
 
-	    void *(*lexfunction)(void *);
-	    if (downstream[mythreadi].steps == 7) {
-		lexfunction = lexpermute_seven;
-	    } else {
-		lexfunction = lexpermute;
-	    }
-
 	    #ifdef DEBUGTIMING
 	    startsize[mythreadi]=clock();
 	    #endif
@@ -878,12 +888,7 @@ void *lexpermute(void *argstruct)
 	    clock_t startsize=clock();
 	    #endif
 
-	    if (downstream[mythreadi].steps == 7) {
-		subiterations=
-		    (long long *)lexpermute_seven(&downstream[mythreadi]);
-	    } else {
-		subiterations=(long long *)lexpermute(&downstream[mythreadi]);
-	    }
+	    subiterations= (long long *)lexfunction(&downstream[mythreadi]);
 
 	    if ((a->steps == CheckLevel) && (ThreadLevel == NOTHREADS)) {
 		permutecount += *subiterations;
@@ -1128,6 +1133,199 @@ void *lexpermute_seven(void *argstruct)
     *returnval = iterations;
     return (void *)returnval;
 }
+
+/* same as lexpermute_seven(), only for steps==11, and without comments */
+void *lexpermute_eleven(void *argstruct)
+{
+    LEXPERMUTE_ARGS *a = (LEXPERMUTE_ARGS *)argstruct;
+
+    if (a->steps != 7) {
+	printf("lexpermute_seven called with steps=%d -- exiting\n",a->steps);
+	exit(1);
+    }
+
+    /* long here, or long long? */
+    long iterations = 0;
+			/* count the number we process internally -- use a
+			 * dynamically allocated value for passing back via
+			 * phtreads
+			 */
+    long mypuzzle[8];	/* local update(s) of puzzle, levels1-7, 0 unused */
+    int set_i;		/* set index pointer */
+    register int j;	/* counter */
+    char stemp[80];	/* temporary string array for printing things */
+
+    unsigned long setmap = 0;
+			/* This bitmap shows which elements of the set are
+			 * already in use by another step in the permutation.
+			 * i.e. if:
+			 * set    = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+			 * and
+			 * setmap=0b 1  1  1  1  0  0  0  0  0
+			 * ...then we are at level steps=3 (7-4), possible
+			 *    values still to use are 5-9.
+			 *
+			 * ...this used to be an array that looked like
+			 * setmap = [6, 7, 5, 4, 0, 0, 0, 0, 0]
+			 * but index[] already contains the sequence details
+			 * and this should be faster.
+			 */
+    
+    int index[8];	/* indexes for the various levels, 0 unused, 1-7 used */
+    unsigned long move;	/* temporary bitmap of move being set/checked/cleared */
+
+    /*
+        at any given point, solution being tested is:
+	a->solution, a->set[index[7]], a->set[index[6]], ... a->set[index[1]]
+    */
+    char solnstart[80];		/* make string of solution established before
+				   this function, for use in debug/victory
+				   output */
+    sprintf(solnstart, "sequence: ");
+    for(j=0; j < SIZE; j++) {
+	if (a->solution[j] == -1) { break; }
+	sprintf(stemp, "%d,", a->solution[j]);
+	strcat(solnstart, stemp);
+    }
+
+    #ifdef EXTRADEBUG1
+    pthread_t me = pthread_self();
+    short isthread = (! pthread_equal(tid_main, me));
+
+    sprintf(stemp, "--\n%sstarting lexpermute7 ", (isthread ? "*" : ""));
+    print_lexargs(stemp,a);
+    #endif
+    
+    /*
+	now in seven loops, cycle through all the permutations of the
+	steps/set passed to us
+    */
+    for (index[7] = BeginStep[7]; index[7] < a->setsize; index[7]++) {
+      /* mark our place in the map -- at this level we don't need to worry
+       * about stepping on any other level */
+      move=(1 << index[7]);
+      setmap |= move; /* set bit representing occupied move */
+
+      /* update puzzle */
+      mypuzzle[7] = flipout(a->puzzle, a->set[index[7]]);
+
+      for (index[6] = 0; index[6] < a->setsize; index[6]++) {
+	/* skip this index value if it is in use upstream */
+	move=(1 << index[6]);
+	if (setmap & move) { continue; }
+	setmap |= move;
+
+	mypuzzle[6] = flipout(mypuzzle[7], a->set[index[6]]);
+
+	for (index[5] = 0; index[5] < a->setsize; index[5]++) {
+	  /* skip this index value if it is in use upstream */
+	  move=(1 << index[5]);
+	  if (setmap & move) { continue; }
+	  setmap |= move;
+
+	  mypuzzle[5] = flipout(mypuzzle[6], a->set[index[5]]);
+
+	  for (index[4] = 0; index[4] < a->setsize; index[4]++) {
+	    /* skip this index value if it is in use upstream */
+	    move=(1 << index[4]);
+	    if (setmap & move) { continue; }
+	    setmap |= move;
+
+	    mypuzzle[4] = flipout(mypuzzle[5], a->set[index[4]]);
+
+	    for (index[3] = 0; index[3] < a->setsize; index[3]++) {
+	      /* skip this index value if it is in use upstream */
+	      move=(1 << index[3]);
+	      if (setmap & move) { continue; }
+	      setmap |= move;
+
+	      mypuzzle[3] = flipout(mypuzzle[4], a->set[index[3]]);
+
+	      for (index[2] = 0; index[2] < a->setsize; index[2]++) {
+		/* skip this index value if it is in use upstream */
+		move=(1 << index[2]);
+		if (setmap & move) { continue; }
+		setmap |= move;
+
+		mypuzzle[2] = flipout(mypuzzle[3], a->set[index[2]]);
+
+		for (index[1]=0; index[1]<a->setsize; index[1]++)
+		{
+		    if (setmap & (1 << index[1])) { continue; }
+		    /* no need to mark the set map here, no downstream */
+
+		    mypuzzle[1] = flipout(mypuzzle[2], a->set[index[1]]);
+
+		    iterations++;
+		    if (mypuzzle[1] == PUZZLECOMPLETE) {
+			int s[7];
+			for (j=6; j>=0; j--) {
+			    s[6-j] = a->set[index[j]];
+			}
+			sprintf(stemp, "success with %s", solnstart);
+			printseq(stdout, stemp, s, 7, -1);
+			printpuzzle(&mypuzzle[1]);
+			Results++;
+		    }
+		    else if (debug > 1) {
+			int ts[SIZE], ii, ti[Steps+1];
+			long long tn = 0;
+			for(j=0; j < SIZE; j++) {
+			    if (a->solution[j] == -1) {
+				for (ii=7; ii>0; ii--) {
+				    ts[j+7-ii] = a->set[index[ii]];
+				}
+				ts[j+7] = -1;
+				break;
+			    }
+			    ts[j] = a->solution[j];
+			}
+			sequence2index(ts, Steps, ti);
+			index2permute(ti, Steps, tn);
+			char temp[80];
+			sprintf(temp, "finishing sequence %20lld: ", tn);
+			printseq(stdout, temp, ts, SIZE, -1);
+	
+			if (debug > 2) {
+			    printpuzzle(&mypuzzle[1]);
+			}
+		    }
+		} /* end for index 1 */
+
+		setmap &= ~(1 << index[2]); /* the tilde is a not */
+	      } /* end for index 2 */
+
+	      setmap &= ~(1 << index[3]);
+	    } /* end for index 3 */
+
+	    setmap &= ~(1 << index[4]);
+	  } /* end for index 4 */
+
+	  setmap &= ~(1 << index[5]);
+	} /* end for index 5 */
+
+	setmap &= ~(1 << index[6]);
+      } /* end for index 6 */
+
+      setmap &= ~(1 << index[7]);
+    } /* end for index 7 */
+    if (BeginStep[7]) {
+	for (j=0; j<8; j++) { BeginStep[j]=0; }
+    }
+
+    #ifdef EXTRADEBUG1
+    if ((a->steps == (ThreadLevel-1)) && isthread) {
+	sprintf(stemp, "Completed lex7 thread %ld iterations %ld, ",
+	        (long) me, iterations);
+	print_lexargs(stemp,a);
+    }
+    #endif
+
+    long *returnval = malloc(sizeof(long));
+    *returnval = iterations;
+    return (void *)returnval;
+}
+
 
 void testmode(long *puzzle)
 {
