@@ -57,7 +57,15 @@ while (@ARGV) {
     push @Sources, $_;
 }
 
-#print STDERR "sources: ".join("\n", @Sources)."\n"; exit;
+# make sure entries in @Sources are unique... and non-zero
+{
+    my %seen = ();
+    foreach my $i (@Sources) { next unless ($i); $seen{$i}++; }
+    @Sources = sort keys %seen;
+}
+
+#print STDERR "sources: ".join("\n", @Sources)." [".$#Sources."]\n"; exit;
+die "No path[s] to scan specified!\n" unless (@Sources);
 
 if ($MD5file && ( -r $MD5file )) {
     # if file contains 'generated on' line, we'll use that as the 'last
@@ -122,12 +130,6 @@ if ($MD5file && ( -r $MD5file )) {
     close (IN);
 }
 
-# make sure entries in @Sources are unique... and non-zero
-{
-    my %seen = ();
-    foreach my $i (@Sources) { next unless ($i); $seen{$i}++; }
-    @Sources = sort keys %seen;
-}
 my $time = time();
 print STDERR ".md5 file read in ".($time - $lasttime)." sec\n"; $lasttime=$time;
 print STDERR ".keys in \%seenfile: ".scalar(keys(%seenfile))."\n";
