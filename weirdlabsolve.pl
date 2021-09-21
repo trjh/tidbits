@@ -13,15 +13,37 @@ sub reset {
 #	     [1, 0, 0, 1],
 #	     [1, 0, 0, 1],
 #	     [0, 1, 1, 0]);
-#   @third = ([0, 0, 0, 0],
-#	     [0, 0, 0, 0],
-#	     [0, 0, 0, 0],
-#	     [0, 0, 0, 0]);
+   @third = ([0, 0, 0, 0],
+	     [0, 0, 0, 0],
+	     [0, 0, 0, 0],
+	     [0, 0, 0, 0]);
 # fourth really
    @third = ([0, 0, 0, 0, 0],
-	     [0, 1, 0, 1, 0],
+	     [0, 0, 0, 0, 0],
 	     [0, 1, 0, 1, 0],
 	     [0, 0, 0, 0, 0]);
+   # success in 1+7 with seq: 0, 2, 4, 6, 8, 10, 14, 17
+   @third = ([0, 0, 1, 0],
+	     [0, 0, 1, 1],
+	     [1, 1, 0, 0],
+	     [0, 1, 0, 0]);
+   # success in 1+5 with seq: 0, 3, 6, 10, 13, 14
+   @third = ([1, 0, 0, 0],
+	     [0,  , 0, 0],
+	     [0, 0,  , 0],
+	     [0, 0, 0, 1]);
+   # success in 1+3 with seq: 1, 4, 7, 13
+   @third = ([0, 0, 0, 0, 0],
+	     [0, 0, 0, 0, 0],
+	     [1, 0, 1, 0, 1],
+	     [0, 0, 0, 0, 0]);
+# success in 1+13 with seq: 0, 1, 3, 4, 5, 6, 7, 8, 9, 11, 13, 16, 17, 18
+   @third = ([0, 0, 0, 0, 0],
+	     [0, 0, 0, 0, 0],
+	     [0, 0, 0, 0, 0],
+	     [1, 0, 0, 0, 1]);
+# pos 7 is blank
+# success in 1+13 with seq: 0, 1, 2, 3, 4, 5, 9, 10, 11, 13, 14, 16, 17, 18
 }
 &reset;
 # ok third success is all ones
@@ -32,9 +54,12 @@ my $movelimit = 20;
 # reckon we don't need to move any position more than once
 # and that thus we only need at most 16 moves
 #my @seq = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-my @seq = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
-	   19, 20);
-my ($width, $height, $size) = (5, 4, 20);
+#my @seq = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+#	   19, 20);
+#my ($width, $height, $size) = (5, 4, 20);
+my ($width, $height) = (1+$#{$third[0]}, 1+$#third);
+my $size = $width * $height;
+my @seq = (0 .. ($size-1));
 my %seenseq = ();
 $seenseq{join(" ",@seq)}++;
 
@@ -77,11 +102,37 @@ while (@ARGV) {
 }
 
 # the main functionality
-&generate($size);
+#&generate($size);
+for (my $i=1; $i <= $size; $i++) {
+    print "Trying size $i\n";
+    &generate_new($i, 0, $size-1, []);
+}
 
 exit(0);
 ## END
 
+## new algorithm -- order doesn't matter, so
+## generate_new($size, $r_start, $r_end, $ra_sequence)
+## test all combinations, in which the order is unimportant and each move is
+## only relevant once, of size $size in the range $rstart - $rend.  if size=1,
+## test the result of running the moves.
+sub generate_new($$$$) {
+    my ($size, $r_start, $r_end, $ra_sequence) = (@_);
+
+    if ($size == 1) {
+	for (my $j = $r_start; $j <= $r_end; $j++) {
+	    @seq = (@$ra_sequence, $j);
+	    &output;
+	}
+	return;
+    }
+
+    for (my $j = $r_start; $j <= $r_end; $j++) {
+	&generate_new($size-1, $j+1, $r_end, [ @$ra_sequence, $j ]);
+    }
+    return;
+}
+    
 sub interactive {
     &map;
     my $moves = 0;
@@ -102,10 +153,10 @@ sub interactive {
     }
     sub map {
     print
-"Interactive Mode -- map:   0  1  2  3  4
-			   5  6  7  8  9
-			  10 11 12 13 14
-			  15 16 17 18 19\n";
+"Interactive Mode -- map:   0  1  2  3  4  or  0  1  2  3
+			   5  6  7  8  9      4  5  6  7
+			  10 11 12 13 14      8  9 10 11
+			  15 16 17 18 19     12 13 14 15\n";
     }
 }
 
@@ -131,11 +182,11 @@ sub output {
 	$ltime=$t;
     }
     print "trying ".join(",",@seq)."\n" if ($Debug);
-    for (my $s=0; $s<$size; $s++) {
+    for (my $s=0; $s<=$#seq; $s++) {
 	&flip($seq[$s]);
 	if ($Debug > 1) {
 	    print "flip $seq[$s]:\n";
-	    &printthird;
+	    &printthird("");
 	}
 	if (&uniform & ($s+1 < $successlength)) {
 	    # victory
@@ -184,11 +235,12 @@ sub flip($) {
     }
 }
 
+# sigh.  this has been the wrong way around. we want all 1s
 sub uniform() {
     my $result = 0;
     for (my $y = 0; $y < $height; $y++) {
 	for (my $x = 0; $x < $width; $x++) {
-	    return 0 if ($third[$y]->[$x]);
+	    return 0 if ($third[$y]->[$x] == 0);
 #	    $result += $third[$y]->[$x];
 	}
     }
@@ -847,8 +899,21 @@ Version 1.10.2
 - cleaned up a bit of debug output missed in the last pass
 - implement signal handlers to print an update or stop cleanly
 - removed notes in .pl from running steps=12
+
+runs taking WAY too long -- is it possible that as I forgot to specify -j0
+that the threading loop is starting four identical _11 runs?
+
+make CheckLevel used everywhere
+BUT MAKE IT THREAD-SAFE AS CURRENTLY UPDATES A GLOBAL
 #
 #   END: Version 1.10.2
+- start to version 1.10.2.  lexpermute_eleven is just a copy of
+  lexpermute_seven, so that when I make changes to convert seven to eleven,
+  they will be easier to see in a git diff
+- added function definitions and other call bits for eleven
+- make lexpermute_seven and lexpermute_eleven use a long long for counting
+  internal iterations.  update this anyplace that expected just a long*
+  returned from lexpermute*
 # START: Version 1.10.3
 # 
 THEN
@@ -857,6 +922,82 @@ create lexpermute_ten or eleven
 #   END: Version 1.10.3
 # START: Version 1.10.4
 # 
+    Version 1.10.2 on host "M00845"
+    steps: 13, solution space:     482718652.4 mil, estimate: ^Wæ5>ÉA^B6.7 we3
+    constrained run size:            1270312.2 mil, estimate: ¨ËaFð3.0 3
+...it also is doing this:
+    Starting top-level element 0
+    Steplevel 12 starting element 0.1
+    Steplevel 12 starting element 0.1.2
+    so an int/long/long long issue on cygwin?
+
+# new for Run 14
+--chunk argument instead of begin/end, which understands chunk per level
+output includes Begin iteration # and intended end iteration #
+--split sizes number of zeros based on number of splits
+
+# longer-term
+random output of result puzzle board
+test: look for correct recognition of solution.  take a few sample sequences,
+    e.g. 16 12 14 1 13 3 9 6 4 2 8 10 17 19
+    find what starting puzzle board would make that sequence give a solution,
+    then insert that starting-puzzle-board and make sure the code recognizes
+    that it does find a solution
+test: is order important?  pick a puzzle board result and print all the
+    sequences that give that result.  do they all contain the same moves in
+    different orders?
+
+## right, well, never mind.  The first chunks of step 14 immediately spit out
+results.  In fact, they made it clear that XOR is commutative, so this whole
+process should have been a LOT shorter.  i.e. if you are XORing a series of
+values, it does not matter what order those values are in.  3 XOR 2 XOR 4
+gives the same result as 4 XOR 3 XOR 2.
+
+    Completed permutations 0 - 515908673280, Results 42124320
+
+The first chunk of 515 billion permutations gave 42 million results.  Any
+combination of the moves 0, 1, 2, 3, 4, 5, 9, 10, 14, 15, 16, 17, 18, and 19
+will solve the puzzle.  Oddly, there is clearly a bug that causes '3' to come
+out instead of the other numbers in the success print statement (always at the
+end of the statement, so likely a bug in printseq()).
+
+    grep ^success.with Results/n14.top0001 | \
+    perl -ne 's/^success with sequence: //;
+	      chomp; $l++; my @s=split(","); $three=0;
+	      foreach $i (@s) {
+		$c{$i}++; $three++ if ($i==3);
+		if ($three>1 && !/,3$/) { print "$_\n"}
+	      };
+	      END {
+		print "count, move# (lines $l)\n";
+		foreach $k (sort keys %c) {
+		    printf("%8d  move %d\n",$c{$k},$k)
+		}
+	      }' | tee /tmp/movesout
+
+    count, move# (lines 42124320)
+    42124320  move 0
+    42124320  move 1
+    38495520  move 10
+    38495520  move 14
+    38495520  move 15
+    38495520  move 16
+    38495520  move 17
+    38495520  move 18
+    38495520  move 19
+    42124320  move 2
+    78412320  move 3
+    38495520  move 4
+    38495520  move 5
+    38495520  move 9
+
+This was a very nice stretch of my C coding muscles, exploration of threading
+(does not seem v. useful for parallelization on Linux or OSX/FreeBSD!), and
+cobbled-together shell scripts & rsync for distributed computing.  On to the
+next project.
+
+fix cpu_data so it knows about parallel runs
+update speed charts on all hosts, did we slow things down?
 review ALL output
 convert all ints to unsigned as no need for sign?
 https://stackoverflow.com/questions/5248915/execution-time-of-c-program
