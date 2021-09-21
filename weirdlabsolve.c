@@ -15,7 +15,7 @@
 #ifndef lint
 static char *RCSid = "$Header: /Users/tim/proj/src/weirdlab/RCS/weirdsolve.c,v 1.5 2017/07/01 22:39:45 tim Exp tim $";
 #endif
-static char *Version = "1.9.2";
+static char *Version = "1.10.2";
 
 #include <unistd.h>
 #include <stdlib.h>
@@ -64,11 +64,16 @@ int debug = 0;
 /* #define DEBUGTIMING -- track timings of execution at each level of
 			  recursion */
 
-/* we need the overall number of steps being processed to be a global when
+/*
+ * we need the overall number of steps being processed to be a global when
  * calculating permutation numbers down at the level where the number of steps
  * is only defined as the number of steps remaining to permute
+ *
+ * other globals useful for keeping track of stats: solspace, runsize
  */
 int Steps = SIZE;
+long long solspace;	/* total permutations given moves[] & Steps */
+long long  runsize = 1;	/* number of permutations this run is processing */
 
     /* factor to use to go from iteration number to position in moves array.
        index is number of steps remaining, so
@@ -92,14 +97,14 @@ long long permutecount = 0;
    our standard estimate x 6 x 60 == 6 minutes
 */
 #define CHECKINTERVAL   42984000000
+/* #define CHECKINTERVAL   4298400000 */
 
 long long LastCountCheck = 0;	/* the last permcount value when we did a
 				    timecheck on permutations/sec */
 long long NextCountCheck=CHECKINTERVAL;
 				/* goal for next permcount value when we do
 				      a timecheck */
-int CheckLevel = 8;		/* Level to checkpoint at, really only used if
-				   Threading is disabled */
+int CheckLevel = 8;		/* Level to checkpoint at */
 
 long long BeginIteration = 0;	/* iteration to start at */
 long long EndIteration = 0;	/* iteration to end at,
@@ -194,7 +199,7 @@ void *lexpermute_seven(void *argstruct);
 void *lexpermute_eleven(void *argstruct);
 void printseq(FILE *stream, char *, int sequence[], int size, int extra);
 void revprintseq(FILE *stream, char *, int sequence[], int size, int extra);
-void timecheck(int *solution, int laststep);
+void timecheck(int *solution, int laststep, int steps);
 void print_lexargs(char *intro, LEXPERMUTE_ARGS *a);
 void init_pos2flip();
 void init_factor(int steps);
@@ -202,6 +207,12 @@ void show_split();
 char *sec2string(long long seconds);
 void signal_stop(int signal);
 void signal_info(int signal);
+
+/* needed on gir -- tho unistd.h seems to have it?! */
+#if defined(__linux__) || defined(__CYGWIN__)
+    int gethostname(char *name, size_t len);
+    #define SIGINFO 29
+#endif
 
 /* with the implementation of pos2flip, flipout can be a macro
    ...we kept the function version for now, renamed with a _function */
@@ -357,7 +368,9 @@ int main(int argc, char *argv[])
 	/* process options */
 	int ShowSplit = 0;
 	int flags, opt;
+	#ifndef __CYGWIN__
 	extern char *optarg;
+	#endif
 	while (1) {
 	    static struct option long_options[] =
 	    {
@@ -581,13 +594,11 @@ int main(int argc, char *argv[])
 void lexrun(LEXPERMUTE_ARGS *la)
 {
     clock_t startsize, endsize;		/* timing variables */
-    long long solspace = 1;		/* size of solution space */
-    long long runsize;			/* number of permutations we plan to
-					   do, less than or equal to solspace */
     unsigned long i;			/* counter */
     long long *iterations;		/* iterations processed by lexrun() */
 
     /* calculate the total number of permutations */
+    solspace = 1;
     for (i=0; i<la->steps; i++) {
 	solspace = solspace * (SIZE-i);
     }
@@ -606,6 +617,7 @@ void lexrun(LEXPERMUTE_ARGS *la)
 	   sec2string((long long)(runsize/GuessRate)));
     } else {
 	puts("");
+	runsize = solspace;
     }
 
     startsize=clock();
@@ -772,6 +784,26 @@ void *lexpermute(void *argstruct)
 	if (a->solution[0] == -1) {
 	    printf("Starting top-level element %d\n", a->set[set_i]);
 	}
+	/* also if steps > 10, announce each level start above 10 */
+	else if ((Steps > 10) && (a->steps > 10)) {
+	    switch(Steps - a->steps) {
+		case 1:
+		    printf("Steplevel %2d starting element %d.%d\n",
+			a->steps, a->solution[0], a->set[set_i]);
+		    break;
+		case 2:
+		    printf("Steplevel %2d starting element %d.%d.%d\n",
+			a->steps, a->solution[0], a->solution[1],
+			a->set[set_i]);
+		    break;
+		case 3:
+		    printf("Steplevel %2d starting element %d.%d.%d.%d\n",
+			a->steps, a->solution[0], a->solution[1],
+			a->solution[2],
+			a->set[set_i]);
+		    break;
+	    }
+	}
 
 	/* update puzzle */
 	mypuzzle = flipout(a->puzzle, a->set[set_i]);
@@ -873,7 +905,9 @@ void *lexpermute(void *argstruct)
 		     * iterations is a count of how many iterations this call
 		     * and its subcalls have made
 		     */
-		    permutecount += *((long long *) v_subiterations);
+		    if (a->steps == CheckLevel) {
+			permutecount += *((long long *) v_subiterations);
+		    }
 
 		    *iterations += *((long long *) v_subiterations);
 		    free(v_subiterations);
@@ -890,7 +924,7 @@ void *lexpermute(void *argstruct)
 
 	    subiterations= (long long *)lexfunction(&downstream[mythreadi]);
 
-	    if ((a->steps == CheckLevel) && (ThreadLevel == NOTHREADS)) {
+	    if (a->steps == CheckLevel) {
 		permutecount += *subiterations;
 	    }
 
@@ -906,7 +940,7 @@ void *lexpermute(void *argstruct)
 	
 	/* status check time? */
 	if (permutecount > NextCountCheck) {
-	    timecheck(a->solution, a->set[set_i+1]);
+	    timecheck(a->solution, a->set[set_i+1], a->steps);
 	    LastCountCheck = permutecount;
 	    NextCountCheck = permutecount + CHECKINTERVAL;
 	}
@@ -916,7 +950,7 @@ void *lexpermute(void *argstruct)
 
     #ifdef EXTRADEBUG1
     if ((a->steps == (ThreadLevel-1)) && isthread) {
-	sprintf(stemp, "Completed thread %ld iterations %ld, ",
+	sprintf(stemp, "Completed thread %ld iterations %lld, ",
 	        (long) me, *iterations);
 	print_lexargs(stemp,a);
     }
@@ -953,7 +987,7 @@ void *lexpermute_seven(void *argstruct)
     }
 
     /* long here, or long long? */
-    long iterations = 0;
+    long long iterations = 0;
 			/* count the number we process internally -- use a
 			 * dynamically allocated value for passing back via
 			 * phtreads
@@ -1123,13 +1157,13 @@ void *lexpermute_seven(void *argstruct)
 
     #ifdef EXTRADEBUG1
     if ((a->steps == (ThreadLevel-1)) && isthread) {
-	sprintf(stemp, "Completed lex7 thread %ld iterations %ld, ",
+	sprintf(stemp, "Completed lex7 thread %ld iterations %lld, ",
 	        (long) me, iterations);
 	print_lexargs(stemp,a);
     }
     #endif
 
-    long *returnval = malloc(sizeof(long));
+    long long *returnval = malloc(sizeof(long long));
     *returnval = iterations;
     return (void *)returnval;
 }
@@ -1139,45 +1173,23 @@ void *lexpermute_eleven(void *argstruct)
 {
     LEXPERMUTE_ARGS *a = (LEXPERMUTE_ARGS *)argstruct;
 
-    if (a->steps != 7) {
-	printf("lexpermute_seven called with steps=%d -- exiting\n",a->steps);
+    if (a->steps != 11) {
+	printf("lexpermute_eleven called with steps=%d -- exiting\n",a->steps);
 	exit(1);
     }
 
-    /* long here, or long long? */
-    long iterations = 0;
-			/* count the number we process internally -- use a
-			 * dynamically allocated value for passing back via
-			 * phtreads
-			 */
-    long mypuzzle[8];	/* local update(s) of puzzle, levels1-7, 0 unused */
+    long long iterations = 0;
+    long long iterations_at_permuteupdate = 0;
+    long mypuzzle[12];	/* local update(s) of puzzle, levels1-11, 0 unused */
     int set_i;		/* set index pointer */
     register int j;	/* counter */
     char stemp[80];	/* temporary string array for printing things */
 
     unsigned long setmap = 0;
-			/* This bitmap shows which elements of the set are
-			 * already in use by another step in the permutation.
-			 * i.e. if:
-			 * set    = [1, 2, 3, 4, 5, 6, 7, 8, 9]
-			 * and
-			 * setmap=0b 1  1  1  1  0  0  0  0  0
-			 * ...then we are at level steps=3 (7-4), possible
-			 *    values still to use are 5-9.
-			 *
-			 * ...this used to be an array that looked like
-			 * setmap = [6, 7, 5, 4, 0, 0, 0, 0, 0]
-			 * but index[] already contains the sequence details
-			 * and this should be faster.
-			 */
     
-    int index[8];	/* indexes for the various levels, 0 unused, 1-7 used */
+    int index[12];	/* indexes for the various levels, only 1-11 used */
     unsigned long move;	/* temporary bitmap of move being set/checked/cleared */
 
-    /*
-        at any given point, solution being tested is:
-	a->solution, a->set[index[7]], a->set[index[6]], ... a->set[index[1]]
-    */
     char solnstart[80];		/* make string of solution established before
 				   this function, for use in debug/victory
 				   output */
@@ -1192,25 +1204,70 @@ void *lexpermute_eleven(void *argstruct)
     pthread_t me = pthread_self();
     short isthread = (! pthread_equal(tid_main, me));
 
-    sprintf(stemp, "--\n%sstarting lexpermute7 ", (isthread ? "*" : ""));
+    sprintf(stemp, "--\n%sstarting lexpermute11 ", (isthread ? "*" : ""));
     print_lexargs(stemp,a);
     #endif
     
     /*
-	now in seven loops, cycle through all the permutations of the
+	now in eleven loops, cycle through all the permutations of the
 	steps/set passed to us
     */
-    for (index[7] = BeginStep[7]; index[7] < a->setsize; index[7]++) {
+    for (index[11] = BeginStep[11]; index[11] < a->setsize; index[11]++) {
       /* mark our place in the map -- at this level we don't need to worry
        * about stepping on any other level */
-      move=(1 << index[7]);
+      move=(1 << index[11]);
       setmap |= move; /* set bit representing occupied move */
 
       /* update puzzle */
-      mypuzzle[7] = flipout(a->puzzle, a->set[index[7]]);
+      mypuzzle[11] = flipout(a->puzzle, a->set[index[11]]);
+
+      switch(Steps - 11) {
+	  case 1:
+	      printf("Steplevel %2d starting element %d.%d\n",
+		  11, a->solution[0], a->set[index[11]]);
+	      break;
+	  case 2:
+	      printf("Steplevel %2d starting element %d.%d.%d\n",
+		  11, a->solution[0], a->solution[1],
+		  a->set[index[11]]);
+	      break;
+	  case 3:
+	      printf("Steplevel %2d starting element %d.%d.%d.%d\n",
+		  11, a->solution[0], a->solution[1],
+		  a->solution[2],
+		  a->set[index[11]]);
+	      break;
+      }
+
+      for (index[10] = 0; index[10] < a->setsize; index[10]++) {
+	move=(1 << index[10]);
+	if (setmap & move) { continue; }
+	setmap |= move;
+
+	mypuzzle[10] = flipout(mypuzzle[11], a->set[index[10]]);
+
+      for (index[9] = 0; index[9] < a->setsize; index[9]++) {
+	move=(1 << index[9]);
+	if (setmap & move) { continue; }
+	setmap |= move;
+
+	mypuzzle[9] = flipout(mypuzzle[10], a->set[index[9]]);
+
+      for (index[8] = 0; index[8] < a->setsize; index[8]++) {
+	move=(1 << index[8]);
+	if (setmap & move) { continue; }
+	setmap |= move;
+
+	mypuzzle[8] = flipout(mypuzzle[9], a->set[index[8]]);
+
+      for (index[7] = 0; index[7] < a->setsize; index[7]++) {
+	move=(1 << index[7]);
+	if (setmap & move) { continue; }
+	setmap |= move;
+
+	mypuzzle[7] = flipout(mypuzzle[8], a->set[index[7]]);
 
       for (index[6] = 0; index[6] < a->setsize; index[6]++) {
-	/* skip this index value if it is in use upstream */
 	move=(1 << index[6]);
 	if (setmap & move) { continue; }
 	setmap |= move;
@@ -1258,12 +1315,12 @@ void *lexpermute_eleven(void *argstruct)
 
 		    iterations++;
 		    if (mypuzzle[1] == PUZZLECOMPLETE) {
-			int s[7];
-			for (j=6; j>=0; j--) {
-			    s[6-j] = a->set[index[j]];
+			int s[11];
+			for (j=10; j>=0; j--) {
+			    s[10-j] = a->set[index[j]];
 			}
 			sprintf(stemp, "success with %s", solnstart);
-			printseq(stdout, stemp, s, 7, -1);
+			printseq(stdout, stemp, s, 11, -1);
 			printpuzzle(&mypuzzle[1]);
 			Results++;
 		    }
@@ -1272,10 +1329,10 @@ void *lexpermute_eleven(void *argstruct)
 			long long tn = 0;
 			for(j=0; j < SIZE; j++) {
 			    if (a->solution[j] == -1) {
-				for (ii=7; ii>0; ii--) {
-				    ts[j+7-ii] = a->set[index[ii]];
+				for (ii=11; ii>0; ii--) {
+				    ts[j+11-ii] = a->set[index[ii]];
 				}
-				ts[j+7] = -1;
+				ts[j+11] = -1;
 				break;
 			    }
 			    ts[j] = a->solution[j];
@@ -1307,21 +1364,63 @@ void *lexpermute_eleven(void *argstruct)
 	setmap &= ~(1 << index[6]);
       } /* end for index 6 */
 
-      setmap &= ~(1 << index[7]);
-    } /* end for index 7 */
-    if (BeginStep[7]) {
-	for (j=0; j<8; j++) { BeginStep[j]=0; }
+	setmap &= ~(1 << index[7]);
+      } /* end for index 7 */
+
+	/* We should theoretically repeat this code at the end of the next few
+	 * clauses too, but we'll leave that until the next change of
+	 * CheckLevel
+	 */
+	if (CheckLevel == 8) {
+	    /* we can't just add iterations because that value keeps
+	     * increasing
+	     */
+	    permutecount += iterations - iterations_at_permuteupdate;
+	    iterations_at_permuteupdate = iterations;;
+	}
+	/* status check time? */
+	if (permutecount > NextCountCheck) {
+	    /* compose a solution array */
+	    int ts[SIZE], ii;
+	    for(j=0; j < SIZE; j++) {
+		if (a->solution[j] == -1) {
+		    for (ii=11; ii>7; ii--) {
+			ts[j+11-ii] = a->set[index[ii]];
+		    }
+		    ts[j+11] = -1;
+		    break;
+		}
+		ts[j] = a->solution[j];
+	    }
+	    timecheck(ts, -1, 8);
+	    LastCountCheck = permutecount;
+	    NextCountCheck = permutecount + CHECKINTERVAL;
+	}
+
+	setmap &= ~(1 << index[8]);
+      } /* end for index 8 */
+
+	setmap &= ~(1 << index[9]);
+      } /* end for index 9 */
+
+	setmap &= ~(1 << index[10]);
+      } /* end for index 10 */
+
+      setmap &= ~(1 << index[11]);
+    } /* end for index 11 */
+    if (BeginStep[11]) {
+	for (j=0; j<12; j++) { BeginStep[j]=0; }
     }
 
     #ifdef EXTRADEBUG1
     if ((a->steps == (ThreadLevel-1)) && isthread) {
-	sprintf(stemp, "Completed lex7 thread %ld iterations %ld, ",
+	sprintf(stemp, "Completed lex11 thread %ld iterations %lld, ",
 	        (long) me, iterations);
 	print_lexargs(stemp,a);
     }
     #endif
 
-    long *returnval = malloc(sizeof(long));
+    long long *returnval = malloc(sizeof(long long));
     *returnval = iterations;
     return (void *)returnval;
 }
@@ -1374,7 +1473,7 @@ void testmode(long *puzzle)
     }
 
  */
-void timecheck(int *solution, int laststep)
+void timecheck(int *solution, int laststep, int steplevel)
 {
     clock_t t = clock();
     long count_since_last = permutecount - LastCountCheck;
@@ -1383,13 +1482,15 @@ void timecheck(int *solution, int laststep)
     double rate = ((double) permutecount /
 		   (SCALE * (double) (t-start) / CLOCKS_PER_SEC));
     printf("%ld iter, %0.1f sec "
-	   "[%lld total, %.2f "SCALET" checks/sec]\n",
+	   "[%lld total %2lld%%, %.2f "SCALET" checks/sec]\n",
 	   count_since_last,
 	   (double) (t-lasttimecheck) / CLOCKS_PER_SEC,
-	   permutecount, rate);
+	   permutecount,
+	   100*permutecount/runsize,
+	   rate);
     sprintf(temp, "Permute# %lld, just completed all sol under: ",
 	   BeginIteration + permutecount);
-    printseq(stdout, temp, solution, Steps, laststep);
+    printseq(stdout, temp, solution, Steps-steplevel+1, laststep);
 
     lasttimecheck=t;
     if ((StopAfter) && (permutecount >= StopAfter)) {
@@ -1564,7 +1665,8 @@ void show_split()
 	permute2index(steps7_begin, Steps, thisIndex);
 	/* index2sequence(thisIndex, Steps, thisSequence); */
 	
-	printf("weirdlabsolve -n %d --begin %lld -S %lld > Results/n%d.top%d\n",
+	printf("weirdlabsolve -n %d --begin %lld -S %lld "
+	       "> Results/n%d.top%03d\n",
 	    Steps, steps7_begin, first_iteration_perms-1,
 	    Steps, thisChunk);
 	printf("# runsize is %.1f hours, ",
@@ -1576,7 +1678,8 @@ void show_split()
 	thisChunk++;
 	permute2index(nextStart, Steps, thisIndex);
 
-	printf("weirdlabsolve -n %d --begin %lld -S %lld > Results/n%d.top%d\n",
+	printf("weirdlabsolve -n %d --begin %lld -S %lld "
+	       "> Results/n%d.top%03d\n",
 	    Steps, nextStart, Factor[splitfactor]-1,
 	    Steps, thisChunk);
 	printf("# runsize is %.1f hours, ",
@@ -1590,14 +1693,16 @@ void show_split()
 /* if we've received a sigint, tell the lexpermutes to stop ASAP */
 void signal_stop(int signal)
 {
-    printf("Caught signal %d, stopping ASAP\n", signal);
+    printf("Caught signal %d, spermutecount %lld, topping ASAP\n",
+	    signal, permutecount);
     NextCountCheck = StopAfter = 1;
 }
 
 /* if we've received an information signal, tell lexpermutes to report in */
 void signal_info(int signal)
 {
-    printf("Caught signal %d, stats ASAP\n", signal);
+    printf("Caught signal %d, permutecount %lld, stats ASAP\n",
+	    signal, permutecount);
     NextCountCheck = 1;
 }
 
